@@ -11,6 +11,8 @@ struct Entity {
 
 struct Entities {
     entities: Vec<Entity>,
+    indirection: Vec<usize>,
+    free_indrection_slots: Vec<usize>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -20,12 +22,18 @@ impl Entities {
     pub fn new() -> Self {
         Self {
             entities: Vec::new(),
+            indirection: Vec::new(),
+            free_indrection_slots: Vec::new(),
         }
     }
 
     pub fn push(&mut self, entity: Entity) -> EntityHandle {
         self.entities.push(entity);
         EntityHandle(self.entities.len() - 1)
+    }
+
+    pub fn remove(&mut self, entity: EntityHandle) -> Entity {
+        self.entities.swap_remove(entity.0)
     }
 
     pub fn get_mut(&mut self, entity_handle: EntityHandle) -> &mut Entity {
@@ -63,7 +71,7 @@ async fn main() {
     let water_level = 300.;
     let player_color = RED;
 
-    let max_color_lerp_depth = 5000.;
+    let max_color_lerp_depth = 3000.;
 
     let min_camera_zoom = 0.5;
     let max_camera_zoom = 2.0;
@@ -76,12 +84,43 @@ async fn main() {
 
     let mut missiles: Vec<EntityHandle> = Vec::new();
 
+    let mut missiles_to_despawn = Vec::new();
+
     let missile_size = Vec2::new(20., 10.);
     loop {
+        let left_wall = -main_area_width / 2.;
+        let right_wall = main_area_width / 2.;
+
         let screen_width = screen_width();
         let screen_height = screen_height();
 
-        // UPDATE
+        // ================= UPDATE =========================
+
+        for (i, missile_handle) in missiles.iter().enumerate() {
+            let missile = entities.get_mut(*missile_handle);
+
+            let mut explode_missile = false;
+            if missile.rect.left() < left_wall {
+                missile.rect.x = left_wall;
+                missile.velocity.x = 0.;
+                explode_missile = true;
+            }
+
+            if missile.rect.x + missile.rect.w > right_wall {
+                missile.rect.x = right_wall - missile.rect.w;
+                missile.velocity.x = 0.;
+                explode_missile = true;
+            }
+
+            if explode_missile {
+                missiles_to_despawn.push(i)
+            }
+        }
+
+        for missile in missiles_to_despawn.drain(..) {
+            entities.remove(missiles.swap_remove(missile));
+        }
+
         player_rect = player_rect.offset(player_velocity);
         entities.update();
         if player_rect.bottom() < water_level {
@@ -108,6 +147,7 @@ async fn main() {
                 + Vec2::new(-missile_size.x / 2., missile_size.y / 2.);
 
             let acceleration_direction = Vec2::new(player_velocity.x, 0.).normalize() * 0.1;
+            player_velocity -= acceleration_direction * 20.;
             let missile = entities.push(Entity {
                 rect: Rect {
                     x: new_position.x,
@@ -122,15 +162,13 @@ async fn main() {
             missiles.push(missile);
         }
 
-        let center_x = screen_width / 2.;
-
-        if player_rect.left() < -main_area_width / 2. {
-            player_rect.x = -main_area_width / 2.;
+        if player_rect.left() < left_wall {
+            player_rect.x = left_wall;
             player_velocity.x = 0.;
         }
 
-        if player_rect.x + player_rect.w > main_area_width / 2. {
-            player_rect.x = main_area_width / 2. - player_rect.w;
+        if player_rect.x + player_rect.w > right_wall {
+            player_rect.x = right_wall - player_rect.w;
             player_velocity.x = 0.;
         }
 
@@ -145,7 +183,8 @@ async fn main() {
             camera_focal_y = player_rect.y - camera_buffer;
         }
 
-        // DRAW
+        // ===================== DRAW =========================
+
         set_camera(&Camera2D {
             target: vec2(0., camera_focal_y),
             zoom: Vec2::new(camera_zoom / screen_width, -camera_zoom / screen_height),
@@ -189,6 +228,7 @@ async fn main() {
 
         // Draw entities
         entities.draw();
+
         /*
         draw_text_ex(
             "DEEP",
