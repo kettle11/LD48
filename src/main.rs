@@ -2,6 +2,7 @@ use core::fmt::Write;
 use hecs::*;
 use macroquad::prelude::*;
 use macroquad::prelude::{clear_background, next_frame};
+use std::cmp::Ordering;
 use std::fmt::Debug;
 
 mod levels;
@@ -14,7 +15,25 @@ struct Thing {
     color: Color,
     /// If this is 1.0 that means there's no friction
     friction: f32,
+    destructable: bool,
+    /// Set to infinity for kinematic objects
+    mass: f32,
 }
+
+pub(crate) const KINEMATIC_LEVEL_PIECE: Thing = Thing {
+    rect: Rect {
+        x: 0.,
+        y: 0.,
+        w: 0.,
+        h: 0.,
+    },
+    velocity: Vec2::ZERO,
+    acceleration: Vec2::ZERO,
+    color: BLUE,
+    friction: 1.0,
+    destructable: true,
+    mass: f32::INFINITY,
+};
 
 trait QuickFormat: Debug {
     fn append(&self, s: &mut String);
@@ -24,14 +43,18 @@ impl QuickFormat for Thing {
     fn append(&self, s: &mut String) {
         write!(s, "Thing {{rect:").unwrap();
         self.rect.append(s);
-        write!(s, ",velocity:").unwrap();
-        self.velocity.append(s);
-        write!(s, ",acceleration:").unwrap();
-        self.acceleration.append(s);
-        write!(s, ",color:").unwrap();
-        self.color.append(s);
-        write!(s, ",friction:").unwrap();
-        self.friction.append(s);
+        //   write!(s, ",velocity:").unwrap();
+        // self.velocity.append(s);
+        // write!(s, ",acceleration:").unwrap();
+        //  self.acceleration.append(s);
+        //  write!(s, ",color:").unwrap();
+        // self.color.append(s);
+        //  write!(s, ",friction:").unwrap();
+        // self.friction.append(s);
+        //  write!(s, ",destructable:").unwrap();
+        //self.destructable.append(s);
+        //  write!(s, ",movable:").unwrap();
+        write!(s, ",..KINEMATIC_LEVEL_PIECE").unwrap();
         write!(s, "}}").unwrap();
     }
 }
@@ -54,6 +77,12 @@ impl QuickFormat for Vec2 {
 }
 
 impl QuickFormat for f32 {
+    fn append(&self, s: &mut String) {
+        write!(s, "{:?}", self).unwrap();
+    }
+}
+
+impl QuickFormat for bool {
     fn append(&self, s: &mut String) {
         write!(s, "{:?}", self).unwrap();
     }
@@ -104,7 +133,7 @@ async fn main() {
 
     let setup = |level: &Level, world: &mut World| -> Entity {
         for thing in &level.things {
-            let mut thing = thing.clone();
+            let thing = thing.clone();
             world.spawn((thing,));
         }
 
@@ -116,6 +145,8 @@ async fn main() {
                 acceleration: Vec2::ZERO,
                 color: RED,
                 friction: 0.985,
+                destructable: false,
+                mass: 1.0,
             },
         ))
     };
@@ -130,7 +161,7 @@ async fn main() {
 
     let mut editor_start_drag: Option<Rect> = None;
 
-    let ui = macroquad::ui::Ui::new(&mut miniquad::graphics::Context::new());
+    let mut collision_responses: Vec<(Entity, Vec2)> = Vec::new();
 
     loop {
         let left_wall = -main_area_width / 2.;
@@ -158,28 +189,92 @@ async fn main() {
 
             // Update missiles
             {
-                let mut missiles = world.query::<(&Missile, &Thing)>();
+                let mut things0 = world.query::<(Option<&Missile>, &Thing)>();
 
                 // Check if missiles are hitting anything
-                'outer_for: for (missile_entity, (_missile, missile_thing)) in missiles.iter() {
-                    if missile_thing.rect.left() < left_wall {
-                        entities_to_despawn.push(missile_entity);
-                        break 'outer_for;
-                    }
+                for (thing0_entity, (missile0, thing0)) in things0.iter() {
+                    if missile0.is_some() {
+                        if thing0.rect.left() < left_wall {
+                            entities_to_despawn.push(thing0_entity);
+                            continue;
+                        }
 
-                    if missile_thing.rect.x + missile_thing.rect.w > right_wall {
-                        entities_to_despawn.push(missile_entity);
-                        break 'outer_for;
+                        if thing0.rect.x + thing0.rect.w > right_wall {
+                            entities_to_despawn.push(thing0_entity);
+                            continue;
+                        }
                     }
+                    let mut things1 = world.query::<(Option<&Missile>, &Thing)>();
 
-                    let mut things = world.query::<(&Thing,)>();
-                    for (thing_entity, (thing,)) in things.iter() {
-                        if missile_entity != thing_entity && thing_entity != player_entity {
+                    for (thing1_entity, (missile1, thing1)) in things1.iter() {
+                        // We're doing duplicate checks.
+                        // This an easy way to rule those out.
+                        // But it'd be better to just not iterate the duplicate checks.
+                        if thing0_entity < thing1_entity {
+                            // Two kinematic objects won't do anything in a collision.
+                            if thing0.mass == f32::INFINITY && thing1.mass == f32::INFINITY {
+                                continue;
+                            }
+
+                            // Missiles can't collide with player
+                            if (missile0.is_some() && thing1_entity == player_entity)
+                                || (missile1.is_some() && thing0_entity == player_entity)
+                            {
+                                continue;
+                            }
+
                             // Check for collision
-                            if thing.rect.overlaps(&missile_thing.rect) {
+                            if let Some(intersection) = thing1.rect.intersect(thing0.rect) {
                                 // Collides!
-                                entities_to_despawn.push(missile_entity);
-                                break 'outer_for;
+                                if missile0.is_some() {
+                                    entities_to_despawn.push(thing0_entity);
+
+                                    if thing1.destructable {
+                                        entities_to_despawn.push(thing1_entity);
+                                    }
+                                }
+                                if missile1.is_some() {
+                                    entities_to_despawn.push(thing1_entity);
+
+                                    if thing0.destructable {
+                                        entities_to_despawn.push(thing0_entity);
+                                    }
+                                } else {
+                                    // Collision response
+
+                                    let center0 = thing0.rect.point() + thing0.rect.size() / 2.;
+                                    let center1 = thing1.rect.point() + thing1.rect.size() / 2.;
+
+                                    let center_diff = center0 - center1;
+
+                                    let mut collision_overlap = intersection.size();
+
+                                    let mass_ratio = (thing0.mass / thing1.mass).min(1.0);
+
+                                    if collision_overlap.x.abs() < collision_overlap.y.abs() {
+                                        collision_overlap.y = 0.;
+                                    } else {
+                                        collision_overlap.x = 0.;
+                                    }
+
+                                    if center_diff.y < 0. {
+                                        collision_overlap.y *= -1.
+                                    }
+
+                                    if center_diff.x < 0. {
+                                        collision_overlap.x *= -1.
+                                    }
+
+                                    collision_responses.push((
+                                        thing1_entity,
+                                        (-collision_overlap / 2.) * mass_ratio,
+                                    ));
+                                    collision_responses.push((
+                                        thing0_entity,
+                                        collision_overlap / 2. * (1.0 - mass_ratio),
+                                    ));
+                                }
+                                break;
                             }
                         }
                     }
@@ -187,7 +282,23 @@ async fn main() {
             }
 
             for entity in entities_to_despawn.drain(..) {
-                world.despawn(entity).unwrap();
+                let _ = world.despawn(entity);
+            }
+
+            for (entity, response) in collision_responses.drain(..) {
+                if response.length() < 0.001 {
+                    continue;
+                }
+                if let Ok(mut thing) = world.get_mut::<Thing>(entity) {
+                    if thing.mass != f32::INFINITY {
+                        let response_normal = response.normalize();
+
+                        let velocity_response =
+                            thing.velocity.dot(response_normal) * -response_normal;
+                        thing.velocity += velocity_response;
+                        thing.rect = thing.rect.offset(response)
+                    }
+                }
             }
 
             // Move entities
@@ -243,9 +354,13 @@ async fn main() {
 
                 camera_zoom = (max_camera_zoom - min_camera_zoom) * depth_lerp + min_camera_zoom;
 
-                let camera_buffer = (screen_height / camera_zoom) * 2.0 * 0.35;
-                if player_thing.rect.y > camera_focal_y + camera_buffer {
-                    camera_focal_y = player_thing.rect.y - camera_buffer;
+                let camera_buffer = (screen_height / camera_zoom) * 2.0 * 0.3;
+                if player_thing.rect.bottom() > camera_focal_y + camera_buffer {
+                    camera_focal_y = player_thing.rect.bottom() - camera_buffer;
+                }
+
+                if player_thing.rect.y < camera_focal_y - camera_buffer {
+                    camera_focal_y = player_thing.rect.y + camera_buffer;
                 }
 
                 set_camera(&Camera2D {
@@ -274,6 +389,8 @@ async fn main() {
                         acceleration: acceleration_direction,
                         color: BLUE,
                         friction: 1.0,
+                        destructable: false,
+                        mass: 2.0,
                     });
                 }
             }
@@ -303,9 +420,13 @@ async fn main() {
                 info!("BOX DRAW MODE");
                 editor_mode = 2;
             }
+
+            if is_key_pressed(KeyCode::Key3) {
+                info!("PHYSICS BOX DRAW MODE");
+                editor_mode = 3;
+            }
             let camera_position = camera.screen_to_world(mouse_position().into());
 
-            let mut level_edited = false;
             match editor_mode {
                 1 => {
                     if is_mouse_button_pressed(MouseButton::Left) {
@@ -318,24 +439,33 @@ async fn main() {
                         camera_focal_y = camera_position.y;
                     }
                 }
-                2 => {
+                2 | 3 => {
                     if let Some(rect) = editor_start_drag.as_mut() {
                         rect.w = camera_position.x - rect.x;
                         rect.h = camera_position.y - rect.y;
 
                         if is_mouse_button_released(MouseButton::Left) {
+                            if rect.w < 0. {
+                                rect.x = rect.right();
+                                rect.w *= -1.
+                            }
+                            if rect.h < 0. {
+                                rect.y = rect.bottom();
+                                rect.h *= -1.
+                            }
                             let thing = Thing {
                                 rect: *rect,
                                 velocity: Vec2::ZERO,
                                 acceleration: Vec2::ZERO,
                                 color: BLUE,
-                                friction: 0.0,
+                                friction: 1.0,
+                                destructable: true,
+                                mass: if editor_mode == 3 { 1.0 } else { f32::INFINITY },
                             };
                             level.things.push(thing.clone());
                             info!("LEVEL THINGS: {:?}", level.things.len());
                             world.spawn((thing,));
                             editor_start_drag = None;
-                            level_edited = true;
                         }
                     } else {
                         if is_mouse_button_down(MouseButton::Left) {
@@ -354,6 +484,10 @@ async fn main() {
             camera_zoom = camera_zoom.clamp(0.1, 10.);
 
             if is_key_pressed(KeyCode::P) {
+                level
+                    .things
+                    .sort_by(|a, b| a.rect.y.partial_cmp(&b.rect.y).unwrap_or(Ordering::Equal));
+
                 let mut s =
                     "use crate::*;\npub(crate) fn get_level() -> Level { Level {\n things: vec!["
                         .to_string();

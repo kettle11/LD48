@@ -4,37 +4,57 @@ pub(crate) fn get_level() -> Level {
         things: vec![
             Thing {
                 rect: Rect {
-                    x: 0.0,
-                    y: 0.0,
-                    w: 200.0,
-                    h: 200.0,
+                    x: -307.0,
+                    y: 2667.1777,
+                    w: 384.0,
+                    h: 506.0,
                 },
-                velocity: Vec2::new(0.0, 0.0),
-                acceleration: Vec2::new(0.0, 0.0),
-                color: Color {
-                    r: 0.0,
-                    g: 0.89,
-                    b: 0.19,
-                    a: 1.0,
-                },
-                friction: 1.0,
+                ..KINEMATIC_LEVEL_PIECE
             },
             Thing {
                 rect: Rect {
-                    x: 151.5,
-                    y: 2790.2017,
-                    w: 145.0,
-                    h: 315.0,
+                    x: 200.00002,
+                    y: 2779.1777,
+                    w: 110.000015,
+                    h: 132.0,
                 },
-                velocity: Vec2::new(0.0, 0.0),
-                acceleration: Vec2::new(0.0, 0.0),
-                color: Color {
-                    r: 0.0,
-                    g: 0.47,
-                    b: 0.95,
-                    a: 1.0,
+                ..KINEMATIC_LEVEL_PIECE
+            },
+            Thing {
+                rect: Rect {
+                    x: 64.99998,
+                    y: 2948.1777,
+                    w: 93.00002,
+                    h: 79.0,
                 },
-                friction: 0.0,
+                ..KINEMATIC_LEVEL_PIECE
+            },
+            Thing {
+                rect: Rect {
+                    x: 183.00002,
+                    y: 3067.1777,
+                    w: 135.99998,
+                    h: 126.0,
+                },
+                ..KINEMATIC_LEVEL_PIECE
+            },
+            Thing {
+                rect: Rect {
+                    x: 153.99998,
+                    y: 3160.1777,
+                    w: 42.000015,
+                    h: 26.0,
+                },
+                ..KINEMATIC_LEVEL_PIECE
+            },
+            Thing {
+                rect: Rect {
+                    x: 73.00001,
+                    y: 3162.1777,
+                    w: 62.999977,
+                    h: 24.0,
+                },
+                ..KINEMATIC_LEVEL_PIECE
             },
         ],
     }
