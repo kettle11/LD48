@@ -156,23 +156,33 @@ async fn main() {
         if !in_level_editor {
             // ================= UPDATE =========================
 
-            // Missile logic
-            for (entity, (_missile, thing)) in world.query::<(&Missile, &mut Thing)>().iter() {
-                let mut explode_missile = false;
-                if thing.rect.left() < left_wall {
-                    thing.rect.x = left_wall;
-                    thing.velocity.x = 0.;
-                    explode_missile = true;
-                }
+            // Update missiles
+            {
+                let mut missiles = world.query::<(&Missile, &Thing)>();
 
-                if thing.rect.x + thing.rect.w > right_wall {
-                    thing.rect.x = right_wall - thing.rect.w;
-                    thing.velocity.x = 0.;
-                    explode_missile = true;
-                }
+                // Check if missiles are hitting anything
+                'outer_for: for (missile_entity, (_missile, missile_thing)) in missiles.iter() {
+                    if missile_thing.rect.left() < left_wall {
+                        entities_to_despawn.push(missile_entity);
+                        break 'outer_for;
+                    }
 
-                if explode_missile {
-                    entities_to_despawn.push(entity)
+                    if missile_thing.rect.x + missile_thing.rect.w > right_wall {
+                        entities_to_despawn.push(missile_entity);
+                        break 'outer_for;
+                    }
+
+                    let mut things = world.query::<(&Thing,)>();
+                    for (thing_entity, (thing,)) in things.iter() {
+                        if missile_entity != thing_entity && thing_entity != player_entity {
+                            // Check for collision
+                            if thing.rect.overlaps(&missile_thing.rect) {
+                                // Collides!
+                                entities_to_despawn.push(missile_entity);
+                                break 'outer_for;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -192,7 +202,7 @@ async fn main() {
                 let mut query = world
                     .query_one::<(&Player, &mut Thing)>(player_entity)
                     .unwrap();
-                let (player, player_thing) = query.get().unwrap();
+                let (_player, player_thing) = query.get().unwrap();
                 player_thing.rect = player_thing.rect.offset(player_thing.velocity);
 
                 // Player controls
