@@ -8,3 +8,4 @@ edition = "2018"
 
 [dependencies]
 macroquad = {git = "https://github.com/not-fl3/macroquad.git"}
+hecs = "0.5.1"

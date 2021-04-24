@@ -1,64 +1,16 @@
+use hecs::*;
 use macroquad::prelude::*;
 use macroquad::prelude::{clear_background, next_frame};
 
 #[derive(Clone, Debug)]
-struct Entity {
+struct Thing {
     rect: Rect,
     velocity: Vec2,
     acceleration: Vec2,
     color: Color,
 }
 
-struct Entities {
-    entities: Vec<Entity>,
-    indirection: Vec<usize>,
-    free_indrection_slots: Vec<usize>,
-}
-
-#[derive(Copy, Clone, Debug)]
-struct EntityHandle(usize);
-
-impl Entities {
-    pub fn new() -> Self {
-        Self {
-            entities: Vec::new(),
-            indirection: Vec::new(),
-            free_indrection_slots: Vec::new(),
-        }
-    }
-
-    pub fn push(&mut self, entity: Entity) -> EntityHandle {
-        self.entities.push(entity);
-        EntityHandle(self.entities.len() - 1)
-    }
-
-    pub fn remove(&mut self, entity: EntityHandle) -> Entity {
-        self.entities.swap_remove(entity.0)
-    }
-
-    pub fn get_mut(&mut self, entity_handle: EntityHandle) -> &mut Entity {
-        &mut self.entities[entity_handle.0]
-    }
-
-    pub fn update(&mut self) {
-        for entity in &mut self.entities {
-            entity.velocity += entity.acceleration;
-            entity.rect = entity.rect.offset(entity.velocity);
-        }
-    }
-
-    pub fn draw(&mut self) {
-        for entity in &mut self.entities {
-            draw_rectangle(
-                entity.rect.x,
-                entity.rect.y,
-                entity.rect.w,
-                entity.rect.h,
-                BLUE,
-            );
-        }
-    }
-}
+struct Missile {}
 
 #[macroquad::main("Sub")]
 async fn main() {
@@ -80,13 +32,15 @@ async fn main() {
 
     let mut player_rect = Rect::new(0., water_level + 3000., 30., 15.);
 
-    let mut entities = Entities::new();
+    // let mut entities = Entities::new();
 
-    let mut missiles: Vec<EntityHandle> = Vec::new();
+    // let mut missiles: Vec<EntityHandle> = Vec::new();
 
-    let mut missiles_to_despawn = Vec::new();
+    let mut world = World::new();
 
     let missile_size = Vec2::new(20., 10.);
+    let mut entities_to_despawn = Vec::new();
+
     loop {
         let left_wall = -main_area_width / 2.;
         let right_wall = main_area_width / 2.;
@@ -96,33 +50,39 @@ async fn main() {
 
         // ================= UPDATE =========================
 
-        for (i, missile_handle) in missiles.iter().enumerate() {
-            let missile = entities.get_mut(*missile_handle);
-
+        // Missile logic
+        for (entity, (_missile, thing)) in world.query_mut::<(&Missile, &mut Thing)>() {
             let mut explode_missile = false;
-            if missile.rect.left() < left_wall {
-                missile.rect.x = left_wall;
-                missile.velocity.x = 0.;
+            if thing.rect.left() < left_wall {
+                thing.rect.x = left_wall;
+                thing.velocity.x = 0.;
                 explode_missile = true;
             }
 
-            if missile.rect.x + missile.rect.w > right_wall {
-                missile.rect.x = right_wall - missile.rect.w;
-                missile.velocity.x = 0.;
+            if thing.rect.x + thing.rect.w > right_wall {
+                thing.rect.x = right_wall - thing.rect.w;
+                thing.velocity.x = 0.;
                 explode_missile = true;
             }
 
             if explode_missile {
-                missiles_to_despawn.push(i)
+                entities_to_despawn.push(entity)
             }
         }
 
-        for missile in missiles_to_despawn.drain(..) {
-            entities.remove(missiles.swap_remove(missile));
+        for entity in entities_to_despawn.drain(..) {
+            world.despawn(entity).unwrap();
         }
 
         player_rect = player_rect.offset(player_velocity);
-        entities.update();
+
+        // Move entities
+        for (_, (thing,)) in world.query_mut::<(&mut Thing,)>() {
+            thing.velocity += thing.acceleration;
+            thing.rect = thing.rect.offset(thing.velocity);
+        }
+
+        // Player controls
         if player_rect.bottom() < water_level {
             player_velocity.y += gravity_out_of_water;
         } else {
@@ -148,18 +108,20 @@ async fn main() {
 
             let acceleration_direction = Vec2::new(player_velocity.x, 0.).normalize() * 0.1;
             player_velocity -= acceleration_direction * 20.;
-            let missile = entities.push(Entity {
-                rect: Rect {
-                    x: new_position.x,
-                    y: new_position.y,
-                    w: missile_size.x,
-                    h: missile_size.y,
+            world.spawn((
+                Thing {
+                    rect: Rect {
+                        x: new_position.x,
+                        y: new_position.y,
+                        w: missile_size.x,
+                        h: missile_size.y,
+                    },
+                    velocity: player_velocity * 0.8 + acceleration_direction * 10.,
+                    acceleration: acceleration_direction,
+                    color: BLUE,
                 },
-                velocity: player_velocity * 0.8 + acceleration_direction * 10.,
-                acceleration: acceleration_direction,
-                color: BLUE,
-            });
-            missiles.push(missile);
+                Missile {},
+            ));
         }
 
         if player_rect.left() < left_wall {
@@ -227,7 +189,9 @@ async fn main() {
         );
 
         // Draw entities
-        entities.draw();
+        for (entity, (thing,)) in &mut world.query::<(&Thing,)>() {
+            draw_rectangle(thing.rect.x, thing.rect.y, thing.rect.w, thing.rect.h, BLUE);
+        }
 
         /*
         draw_text_ex(
