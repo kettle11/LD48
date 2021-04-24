@@ -8,7 +8,11 @@ struct Thing {
     velocity: Vec2,
     acceleration: Vec2,
     color: Color,
+    /// If this is 1.0 that means there's no friction
+    friction: f32,
 }
+
+struct Player {}
 
 struct Missile {}
 
@@ -16,12 +20,9 @@ struct Missile {}
 async fn main() {
     let font = load_ttf_font("assets/OrelegaOne-Regular.ttf").await;
 
-    let mut player_velocity = Vec2::new(0., 0.);
-    let player_acceleration = Vec2::new(0.1, 0.1);
     let gravity_out_of_water = 0.2;
 
     let water_level = 300.;
-    let player_color = RED;
 
     let max_color_lerp_depth = 3000.;
 
@@ -30,13 +31,22 @@ async fn main() {
     let mut camera_focal_y = screen_height() / 2.0;
     let main_area_width = 570.;
 
-    let mut player_rect = Rect::new(0., water_level + 3000., 30., 15.);
-
     // let mut entities = Entities::new();
 
     // let mut missiles: Vec<EntityHandle> = Vec::new();
 
     let mut world = World::new();
+
+    let player_entity = world.spawn((
+        Player {},
+        Thing {
+            rect: Rect::new(0., water_level + 3000., 30., 15.),
+            velocity: Vec2::new(0.02, 0.02),
+            acceleration: Vec2::ZERO,
+            color: RED,
+            friction: 0.985,
+        },
+    ));
 
     let missile_size = Vec2::new(20., 10.);
     let mut entities_to_despawn = Vec::new();
@@ -51,7 +61,7 @@ async fn main() {
         // ================= UPDATE =========================
 
         // Missile logic
-        for (entity, (_missile, thing)) in world.query_mut::<(&Missile, &mut Thing)>() {
+        for (entity, (_missile, thing)) in world.query::<(&Missile, &mut Thing)>().iter() {
             let mut explode_missile = false;
             if thing.rect.left() < left_wall {
                 thing.rect.x = left_wall;
@@ -74,84 +84,104 @@ async fn main() {
             world.despawn(entity).unwrap();
         }
 
-        player_rect = player_rect.offset(player_velocity);
-
         // Move entities
+
         for (_, (thing,)) in world.query_mut::<(&mut Thing,)>() {
             thing.velocity += thing.acceleration;
+            thing.velocity *= thing.friction;
             thing.rect = thing.rect.offset(thing.velocity);
         }
 
-        // Player controls
-        if player_rect.bottom() < water_level {
-            player_velocity.y += gravity_out_of_water;
-        } else {
-            if is_key_down(KeyCode::Left) {
-                player_velocity.x -= player_acceleration.x;
-            }
-            if is_key_down(KeyCode::Right) {
-                player_velocity.x += player_acceleration.x;
-            }
-            if is_key_down(KeyCode::Up) {
-                player_velocity.y -= player_acceleration.y;
-            }
-            if is_key_down(KeyCode::Down) {
-                player_velocity.y += player_acceleration.y;
-            }
-            player_velocity *= 0.985;
-        }
+        let mut missile_to_spawn = None;
+        {
+            let mut query = world
+                .query_one::<(&Player, &mut Thing)>(player_entity)
+                .unwrap();
+            let (player, player_thing) = query.get().unwrap();
+            player_thing.rect = player_thing.rect.offset(player_thing.velocity);
 
-        // Fire missile
-        if is_key_pressed(KeyCode::Space) {
-            let new_position = (player_rect.point() + Vec2::new(player_rect.w / 2., player_rect.h))
-                + Vec2::new(-missile_size.x / 2., missile_size.y / 2.);
+            // Player controls
+            if player_thing.rect.bottom() < water_level {
+                player_thing.velocity.y += gravity_out_of_water;
+            } else {
+                let player_acceleration = 0.1;
+                if is_key_down(KeyCode::Left) {
+                    player_thing.velocity.x -= player_acceleration;
+                }
+                if is_key_down(KeyCode::Right) {
+                    player_thing.velocity.x += player_acceleration;
+                }
+                if is_key_down(KeyCode::Up) {
+                    player_thing.velocity.y -= player_acceleration;
+                }
+                if is_key_down(KeyCode::Down) {
+                    player_thing.velocity.y += player_acceleration;
+                }
+                player_thing.velocity *= 0.985;
+            }
 
-            let acceleration_direction = Vec2::new(player_velocity.x, 0.).normalize() * 0.1;
-            player_velocity -= acceleration_direction * 20.;
-            world.spawn((
-                Thing {
+            // Check the player against walls
+            if player_thing.rect.left() < left_wall {
+                player_thing.rect.x = left_wall;
+                player_thing.velocity.x = 0.;
+
+                info!("HITTING WALL LEFT: {:?}", player_thing.velocity);
+            }
+
+            if player_thing.rect.x + player_thing.rect.w > right_wall {
+                player_thing.rect.x = right_wall - player_thing.rect.w;
+                player_thing.velocity.x = 0.;
+                info!("HITTING WALL RIGHT: {:?}", player_thing.velocity);
+            }
+
+            // Zoom the camera as the player goes deeper at the start.
+            let depth_lerp = ((player_thing.rect.y - water_level) / max_color_lerp_depth)
+                .min(1.0)
+                .max(0.0);
+
+            let camera_zoom = (max_camera_zoom - min_camera_zoom) * depth_lerp + min_camera_zoom;
+
+            let camera_buffer = (screen_height / camera_zoom) * 2.0 * 0.35;
+            if player_thing.rect.y > camera_focal_y + camera_buffer {
+                camera_focal_y = player_thing.rect.y - camera_buffer;
+            }
+
+            set_camera(&Camera2D {
+                target: vec2(0., camera_focal_y),
+                zoom: Vec2::new(camera_zoom / screen_width, -camera_zoom / screen_height),
+                ..Default::default()
+            });
+
+            // Fire missile
+            if is_key_pressed(KeyCode::Space) {
+                let new_position = (player_thing.rect.point()
+                    + Vec2::new(player_thing.rect.w / 2., player_thing.rect.h))
+                    + Vec2::new(-missile_size.x / 2., missile_size.y / 2.);
+
+                let acceleration_direction =
+                    Vec2::new(player_thing.velocity.x, 0.).normalize() * 0.1;
+                player_thing.velocity -= acceleration_direction * 20.;
+                missile_to_spawn = Some(Thing {
                     rect: Rect {
                         x: new_position.x,
                         y: new_position.y,
                         w: missile_size.x,
                         h: missile_size.y,
                     },
-                    velocity: player_velocity * 0.8 + acceleration_direction * 10.,
+                    velocity: player_thing.velocity * 0.8 + acceleration_direction * 10.,
                     acceleration: acceleration_direction,
                     color: BLUE,
-                },
-                Missile {},
-            ));
+                    friction: 1.0,
+                });
+            }
         }
 
-        if player_rect.left() < left_wall {
-            player_rect.x = left_wall;
-            player_velocity.x = 0.;
-        }
-
-        if player_rect.x + player_rect.w > right_wall {
-            player_rect.x = right_wall - player_rect.w;
-            player_velocity.x = 0.;
-        }
-
-        let depth_lerp = ((player_rect.y - water_level) / max_color_lerp_depth)
-            .min(1.0)
-            .max(0.0);
-
-        let camera_zoom = (max_camera_zoom - min_camera_zoom) * depth_lerp + min_camera_zoom;
-
-        let camera_buffer = (screen_height / camera_zoom) * 2.0 * 0.35;
-        if player_rect.y > camera_focal_y + camera_buffer {
-            camera_focal_y = player_rect.y - camera_buffer;
+        // Separated out to avoid borrow checker complaints.
+        if let Some(missile_to_spawn) = missile_to_spawn.take() {
+            world.spawn((missile_to_spawn, Missile {}));
         }
 
         // ===================== DRAW =========================
-
-        set_camera(&Camera2D {
-            target: vec2(0., camera_focal_y),
-            zoom: Vec2::new(camera_zoom / screen_width, -camera_zoom / screen_height),
-            ..Default::default()
-        });
 
         clear_background(BLACK);
 
@@ -173,6 +203,7 @@ async fn main() {
             Color::new(106. / 255., 183. / 255., 206. / 255., 1.),
         );
 
+        /*
         // Calculate color change to simulate less light.
         let player_color_vec = Vec3::new(player_color.r, player_color.g, player_color.b);
         let color_lerp = depth_lerp.min(0.3);
@@ -187,6 +218,7 @@ async fn main() {
             player_rect.h,
             Color::new(draw_color.x, draw_color.y, draw_color.z, 1.0 - color_lerp),
         );
+        */
 
         // Draw entities
         for (entity, (thing,)) in &mut world.query::<(&Thing,)>() {
