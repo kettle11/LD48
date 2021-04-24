@@ -1,6 +1,8 @@
+use core::fmt::Write;
 use hecs::*;
 use macroquad::prelude::*;
 use macroquad::prelude::{clear_background, next_frame};
+use std::fmt::Debug;
 
 mod levels;
 
@@ -14,19 +16,72 @@ struct Thing {
     friction: f32,
 }
 
+trait QuickFormat: Debug {
+    fn append(&self, s: &mut String);
+}
+
+impl QuickFormat for Thing {
+    fn append(&self, s: &mut String) {
+        write!(s, "Thing {{rect:").unwrap();
+        self.rect.append(s);
+        write!(s, ",velocity:").unwrap();
+        self.velocity.append(s);
+        write!(s, ",acceleration:").unwrap();
+        self.acceleration.append(s);
+        write!(s, ",color:").unwrap();
+        self.color.append(s);
+        write!(s, ",friction:").unwrap();
+        self.friction.append(s);
+        write!(s, "}}").unwrap();
+    }
+}
+
+impl QuickFormat for Rect {
+    fn append(&self, s: &mut String) {
+        write!(
+            s,
+            "Rect {{x: {:?}, y: {:?}, w: {:?}, h: {:?}}}",
+            self.x, self.y, self.w, self.h
+        )
+        .unwrap();
+    }
+}
+
+impl QuickFormat for Vec2 {
+    fn append(&self, s: &mut String) {
+        write!(s, "Vec2::new({:?}, {:?})", self.x, self.y,).unwrap();
+    }
+}
+
+impl QuickFormat for f32 {
+    fn append(&self, s: &mut String) {
+        write!(s, "{:?}", self).unwrap();
+    }
+}
+
+impl QuickFormat for Color {
+    fn append(&self, s: &mut String) {
+        write!(
+            s,
+            "Color {{r: {:?}, g: {:?}, b: {:?}, a: {:?}}}",
+            self.r, self.g, self.b, self.a
+        )
+        .unwrap();
+    }
+}
+
 struct Player {}
 
 struct Missile {}
 
+#[derive(Debug)]
 struct Level {
     things: Vec<Thing>,
 }
 
-async fn level_editor() {}
-
 #[macroquad::main("Sub")]
 async fn main() {
-    let font = load_ttf_font("assets/OrelegaOne-Regular.ttf").await;
+    // let font = load_ttf_font("assets/OrelegaOne-Regular.ttf").await;
 
     let gravity_out_of_water = 0.2;
 
@@ -45,31 +100,37 @@ async fn main() {
 
     let mut world = World::new();
 
-    let level = levels::get_level();
+    let mut level = levels::get_level();
 
-    let level_spawn_offset = 3000.;
-    for thing in &level.things {
-        let mut thing = thing.clone();
-        thing.rect.y += level_spawn_offset;
-        world.spawn((thing,));
-    }
+    let setup = |level: &Level, world: &mut World| -> Entity {
+        for thing in &level.things {
+            let mut thing = thing.clone();
+            world.spawn((thing,));
+        }
 
-    let player_entity = world.spawn((
-        Player {},
-        Thing {
-            rect: Rect::new(0., water_level + 3000., 30., 15.),
-            velocity: Vec2::new(0.02, 0.02),
-            acceleration: Vec2::ZERO,
-            color: RED,
-            friction: 0.985,
-        },
-    ));
-
+        world.spawn((
+            Player {},
+            Thing {
+                rect: Rect::new(0., water_level + 3000., 30., 15.),
+                velocity: Vec2::new(0.02, 0.02),
+                acceleration: Vec2::ZERO,
+                color: RED,
+                friction: 0.985,
+            },
+        ))
+    };
+    let mut player_entity = setup(&level, &mut world);
     let missile_size = Vec2::new(20., 10.);
     let mut entities_to_despawn = Vec::new();
 
     let mut in_level_editor = false;
+    let mut editor_mode = 1;
+
     let mut camera_zoom = 1.0;
+
+    let mut editor_start_drag: Option<Rect> = None;
+
+    let ui = macroquad::ui::Ui::new(&mut miniquad::graphics::Context::new());
 
     loop {
         let left_wall = -main_area_width / 2.;
@@ -83,8 +144,12 @@ async fn main() {
             in_level_editor = !in_level_editor;
             if in_level_editor {
                 info!("EDITOR ENABLED");
+                world.clear();
+                player_entity = setup(&level, &mut world);
+                info!("LEVEL THINGS: {:?}", level.things.len());
             } else {
                 info!("EDITOR DISABLED");
+                info!("LEVEL THINGS: {:?}", level.things.len());
             }
         }
 
@@ -116,7 +181,6 @@ async fn main() {
             }
 
             // Move entities
-
             for (_, (thing,)) in world.query_mut::<(&mut Thing,)>() {
                 thing.velocity += thing.acceleration;
                 thing.velocity *= thing.friction;
@@ -210,6 +274,7 @@ async fn main() {
             }
         } else {
             // ===================== LEVEL EDITOR =========================
+
             let camera = &Camera2D {
                 target: vec2(0., camera_focal_y),
                 zoom: Vec2::new(camera_zoom / screen_width, -camera_zoom / screen_height),
@@ -217,28 +282,78 @@ async fn main() {
             };
             set_camera(camera);
 
-            if is_key_down(KeyCode::Minus) {
-                camera_zoom -= 0.1;
-            }
-
-            if is_key_down(KeyCode::Equal) {
-                camera_zoom += 0.1;
-            }
-
             camera_zoom += mouse_wheel().1 * 0.01;
 
-            if is_mouse_button_pressed(MouseButton::Left) {
-                let mut query = world
-                    .query_one::<(&Player, &mut Thing)>(player_entity)
-                    .unwrap();
-                let (player, player_thing) = query.get().unwrap();
-                let pos = camera.screen_to_world(mouse_position().into());
-                player_thing.rect.x = pos.x;
-                player_thing.rect.y = pos.y;
-                camera_focal_y = pos.y;
+            if is_key_pressed(KeyCode::Key1) {
+                info!("PLAYER MOVE MODE");
+                editor_mode = 1;
+            }
+
+            if is_key_pressed(KeyCode::Key2) {
+                info!("BOX DRAW MODE");
+                editor_mode = 2;
+            }
+            let camera_position = camera.screen_to_world(mouse_position().into());
+
+            let mut level_edited = false;
+            match editor_mode {
+                1 => {
+                    if is_mouse_button_pressed(MouseButton::Left) {
+                        let mut query = world
+                            .query_one::<(&Player, &mut Thing)>(player_entity)
+                            .unwrap();
+                        let (_, player_thing) = query.get().unwrap();
+                        player_thing.rect.x = camera_position.x;
+                        player_thing.rect.y = camera_position.y;
+                        camera_focal_y = camera_position.y;
+                    }
+                }
+                2 => {
+                    if let Some(rect) = editor_start_drag.as_mut() {
+                        rect.w = camera_position.x - rect.x;
+                        rect.h = camera_position.y - rect.y;
+
+                        if is_mouse_button_released(MouseButton::Left) {
+                            let thing = Thing {
+                                rect: *rect,
+                                velocity: Vec2::ZERO,
+                                acceleration: Vec2::ZERO,
+                                color: BLUE,
+                                friction: 0.0,
+                            };
+                            level.things.push(thing.clone());
+                            info!("LEVEL THINGS: {:?}", level.things.len());
+                            world.spawn((thing,));
+                            editor_start_drag = None;
+                            level_edited = true;
+                        }
+                    } else {
+                        if is_mouse_button_down(MouseButton::Left) {
+                            editor_start_drag = Some(Rect {
+                                x: camera_position.x,
+                                y: camera_position.y,
+                                w: 1.,
+                                h: 1.,
+                            })
+                        }
+                    }
+                }
+                _ => {}
             }
 
             camera_zoom = camera_zoom.clamp(0.1, 10.);
+
+            if is_key_pressed(KeyCode::P) {
+                let mut s =
+                    "use crate::*;\npub(crate) fn get_level() -> Level { Level {\n things: vec!["
+                        .to_string();
+                for i in &level.things {
+                    i.append(&mut s);
+                    s.push(',');
+                }
+                s.push_str("]}}");
+                info!("{}", s);
+            }
         }
 
         // ===================== DRAW =========================
@@ -288,6 +403,10 @@ async fn main() {
                 thing.rect.h,
                 thing.color,
             );
+        }
+
+        if let Some(rect) = editor_start_drag {
+            draw_rectangle(rect.x, rect.y, rect.w, rect.h, BLUE);
         }
 
         /*
