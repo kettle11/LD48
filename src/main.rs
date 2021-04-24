@@ -2,6 +2,8 @@ use hecs::*;
 use macroquad::prelude::*;
 use macroquad::prelude::{clear_background, next_frame};
 
+mod levels;
+
 #[derive(Clone, Debug)]
 struct Thing {
     rect: Rect,
@@ -15,6 +17,12 @@ struct Thing {
 struct Player {}
 
 struct Missile {}
+
+struct Level {
+    things: Vec<Thing>,
+}
+
+async fn level_editor() {}
 
 #[macroquad::main("Sub")]
 async fn main() {
@@ -37,6 +45,15 @@ async fn main() {
 
     let mut world = World::new();
 
+    let level = levels::get_level();
+
+    let level_spawn_offset = 3000.;
+    for thing in &level.things {
+        let mut thing = thing.clone();
+        thing.rect.y += level_spawn_offset;
+        world.spawn((thing,));
+    }
+
     let player_entity = world.spawn((
         Player {},
         Thing {
@@ -51,6 +68,9 @@ async fn main() {
     let missile_size = Vec2::new(20., 10.);
     let mut entities_to_despawn = Vec::new();
 
+    let mut in_level_editor = false;
+    let mut camera_zoom = 1.0;
+
     loop {
         let left_wall = -main_area_width / 2.;
         let right_wall = main_area_width / 2.;
@@ -58,131 +78,170 @@ async fn main() {
         let screen_width = screen_width();
         let screen_height = screen_height();
 
-        // ================= UPDATE =========================
-
-        // Missile logic
-        for (entity, (_missile, thing)) in world.query::<(&Missile, &mut Thing)>().iter() {
-            let mut explode_missile = false;
-            if thing.rect.left() < left_wall {
-                thing.rect.x = left_wall;
-                thing.velocity.x = 0.;
-                explode_missile = true;
-            }
-
-            if thing.rect.x + thing.rect.w > right_wall {
-                thing.rect.x = right_wall - thing.rect.w;
-                thing.velocity.x = 0.;
-                explode_missile = true;
-            }
-
-            if explode_missile {
-                entities_to_despawn.push(entity)
-            }
-        }
-
-        for entity in entities_to_despawn.drain(..) {
-            world.despawn(entity).unwrap();
-        }
-
-        // Move entities
-
-        for (_, (thing,)) in world.query_mut::<(&mut Thing,)>() {
-            thing.velocity += thing.acceleration;
-            thing.velocity *= thing.friction;
-            thing.rect = thing.rect.offset(thing.velocity);
-        }
-
-        let mut missile_to_spawn = None;
-        {
-            let mut query = world
-                .query_one::<(&Player, &mut Thing)>(player_entity)
-                .unwrap();
-            let (player, player_thing) = query.get().unwrap();
-            player_thing.rect = player_thing.rect.offset(player_thing.velocity);
-
-            // Player controls
-            if player_thing.rect.bottom() < water_level {
-                player_thing.velocity.y += gravity_out_of_water;
+        // Toggle the level editor
+        if is_key_pressed(KeyCode::E) {
+            in_level_editor = !in_level_editor;
+            if in_level_editor {
+                info!("EDITOR ENABLED");
             } else {
-                let player_acceleration = 0.1;
-                if is_key_down(KeyCode::Left) {
-                    player_thing.velocity.x -= player_acceleration;
+                info!("EDITOR DISABLED");
+            }
+        }
+
+        if !in_level_editor {
+            // ================= UPDATE =========================
+
+            // Missile logic
+            for (entity, (_missile, thing)) in world.query::<(&Missile, &mut Thing)>().iter() {
+                let mut explode_missile = false;
+                if thing.rect.left() < left_wall {
+                    thing.rect.x = left_wall;
+                    thing.velocity.x = 0.;
+                    explode_missile = true;
                 }
-                if is_key_down(KeyCode::Right) {
-                    player_thing.velocity.x += player_acceleration;
+
+                if thing.rect.x + thing.rect.w > right_wall {
+                    thing.rect.x = right_wall - thing.rect.w;
+                    thing.velocity.x = 0.;
+                    explode_missile = true;
                 }
-                if is_key_down(KeyCode::Up) {
-                    player_thing.velocity.y -= player_acceleration;
+
+                if explode_missile {
+                    entities_to_despawn.push(entity)
                 }
-                if is_key_down(KeyCode::Down) {
-                    player_thing.velocity.y += player_acceleration;
-                }
-                player_thing.velocity *= 0.985;
             }
 
-            // Check the player against walls
-            if player_thing.rect.left() < left_wall {
-                player_thing.rect.x = left_wall;
-                player_thing.velocity.x = 0.;
-
-                info!("HITTING WALL LEFT: {:?}", player_thing.velocity);
+            for entity in entities_to_despawn.drain(..) {
+                world.despawn(entity).unwrap();
             }
 
-            if player_thing.rect.x + player_thing.rect.w > right_wall {
-                player_thing.rect.x = right_wall - player_thing.rect.w;
-                player_thing.velocity.x = 0.;
-                info!("HITTING WALL RIGHT: {:?}", player_thing.velocity);
+            // Move entities
+
+            for (_, (thing,)) in world.query_mut::<(&mut Thing,)>() {
+                thing.velocity += thing.acceleration;
+                thing.velocity *= thing.friction;
+                thing.rect = thing.rect.offset(thing.velocity);
             }
 
-            // Zoom the camera as the player goes deeper at the start.
-            let depth_lerp = ((player_thing.rect.y - water_level) / max_color_lerp_depth)
-                .min(1.0)
-                .max(0.0);
+            let mut missile_to_spawn = None;
+            {
+                let mut query = world
+                    .query_one::<(&Player, &mut Thing)>(player_entity)
+                    .unwrap();
+                let (player, player_thing) = query.get().unwrap();
+                player_thing.rect = player_thing.rect.offset(player_thing.velocity);
 
-            let camera_zoom = (max_camera_zoom - min_camera_zoom) * depth_lerp + min_camera_zoom;
+                // Player controls
+                if player_thing.rect.bottom() < water_level {
+                    player_thing.velocity.y += gravity_out_of_water;
+                } else {
+                    let player_acceleration = 0.1;
+                    if is_key_down(KeyCode::Left) || is_key_down(KeyCode::A) {
+                        player_thing.velocity.x -= player_acceleration;
+                    }
+                    if is_key_down(KeyCode::Right) || is_key_down(KeyCode::D) {
+                        player_thing.velocity.x += player_acceleration;
+                    }
+                    if is_key_down(KeyCode::Up) || is_key_down(KeyCode::W) {
+                        player_thing.velocity.y -= player_acceleration;
+                    }
+                    if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
+                        player_thing.velocity.y += player_acceleration;
+                    }
+                    player_thing.velocity *= 0.985;
+                }
 
-            let camera_buffer = (screen_height / camera_zoom) * 2.0 * 0.35;
-            if player_thing.rect.y > camera_focal_y + camera_buffer {
-                camera_focal_y = player_thing.rect.y - camera_buffer;
+                // Check the player against walls
+                if player_thing.rect.left() < left_wall {
+                    player_thing.rect.x = left_wall;
+                    player_thing.velocity.x = 0.;
+                }
+
+                if player_thing.rect.x + player_thing.rect.w > right_wall {
+                    player_thing.rect.x = right_wall - player_thing.rect.w;
+                    player_thing.velocity.x = 0.;
+                }
+
+                // Zoom the camera as the player goes deeper at the start.
+                let depth_lerp = ((player_thing.rect.y - water_level) / max_color_lerp_depth)
+                    .min(1.0)
+                    .max(0.0);
+
+                camera_zoom = (max_camera_zoom - min_camera_zoom) * depth_lerp + min_camera_zoom;
+
+                let camera_buffer = (screen_height / camera_zoom) * 2.0 * 0.35;
+                if player_thing.rect.y > camera_focal_y + camera_buffer {
+                    camera_focal_y = player_thing.rect.y - camera_buffer;
+                }
+
+                set_camera(&Camera2D {
+                    target: vec2(0., camera_focal_y),
+                    zoom: Vec2::new(camera_zoom / screen_width, -camera_zoom / screen_height),
+                    ..Default::default()
+                });
+
+                // Fire missile
+                if is_key_pressed(KeyCode::Space) {
+                    let new_position = (player_thing.rect.point()
+                        + Vec2::new(player_thing.rect.w / 2., player_thing.rect.h))
+                        + Vec2::new(-missile_size.x / 2., missile_size.y / 2.);
+
+                    let acceleration_direction =
+                        Vec2::new(player_thing.velocity.x, 0.).normalize() * 0.1;
+                    player_thing.velocity -= acceleration_direction * 20.;
+                    missile_to_spawn = Some(Thing {
+                        rect: Rect {
+                            x: new_position.x,
+                            y: new_position.y,
+                            w: missile_size.x,
+                            h: missile_size.y,
+                        },
+                        velocity: player_thing.velocity * 0.8 + acceleration_direction * 10.,
+                        acceleration: acceleration_direction,
+                        color: BLUE,
+                        friction: 1.0,
+                    });
+                }
             }
 
-            set_camera(&Camera2D {
+            // Separated out to avoid borrow checker complaints.
+            if let Some(missile_to_spawn) = missile_to_spawn.take() {
+                world.spawn((missile_to_spawn, Missile {}));
+            }
+        } else {
+            // ===================== LEVEL EDITOR =========================
+            let camera = &Camera2D {
                 target: vec2(0., camera_focal_y),
                 zoom: Vec2::new(camera_zoom / screen_width, -camera_zoom / screen_height),
                 ..Default::default()
-            });
+            };
+            set_camera(camera);
 
-            // Fire missile
-            if is_key_pressed(KeyCode::Space) {
-                let new_position = (player_thing.rect.point()
-                    + Vec2::new(player_thing.rect.w / 2., player_thing.rect.h))
-                    + Vec2::new(-missile_size.x / 2., missile_size.y / 2.);
-
-                let acceleration_direction =
-                    Vec2::new(player_thing.velocity.x, 0.).normalize() * 0.1;
-                player_thing.velocity -= acceleration_direction * 20.;
-                missile_to_spawn = Some(Thing {
-                    rect: Rect {
-                        x: new_position.x,
-                        y: new_position.y,
-                        w: missile_size.x,
-                        h: missile_size.y,
-                    },
-                    velocity: player_thing.velocity * 0.8 + acceleration_direction * 10.,
-                    acceleration: acceleration_direction,
-                    color: BLUE,
-                    friction: 1.0,
-                });
+            if is_key_down(KeyCode::Minus) {
+                camera_zoom -= 0.1;
             }
-        }
 
-        // Separated out to avoid borrow checker complaints.
-        if let Some(missile_to_spawn) = missile_to_spawn.take() {
-            world.spawn((missile_to_spawn, Missile {}));
+            if is_key_down(KeyCode::Equal) {
+                camera_zoom += 0.1;
+            }
+
+            camera_zoom += mouse_wheel().1 * 0.01;
+
+            if is_mouse_button_pressed(MouseButton::Left) {
+                let mut query = world
+                    .query_one::<(&Player, &mut Thing)>(player_entity)
+                    .unwrap();
+                let (player, player_thing) = query.get().unwrap();
+                let pos = camera.screen_to_world(mouse_position().into());
+                player_thing.rect.x = pos.x;
+                player_thing.rect.y = pos.y;
+                camera_focal_y = pos.y;
+            }
+
+            camera_zoom = camera_zoom.clamp(0.1, 10.);
         }
 
         // ===================== DRAW =========================
-
         clear_background(BLACK);
 
         // Draw water
@@ -221,8 +280,14 @@ async fn main() {
         */
 
         // Draw entities
-        for (entity, (thing,)) in &mut world.query::<(&Thing,)>() {
-            draw_rectangle(thing.rect.x, thing.rect.y, thing.rect.w, thing.rect.h, BLUE);
+        for (_entity, (thing,)) in &mut world.query::<(&Thing,)>() {
+            draw_rectangle(
+                thing.rect.x,
+                thing.rect.y,
+                thing.rect.w,
+                thing.rect.h,
+                thing.color,
+            );
         }
 
         /*
