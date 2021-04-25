@@ -63,7 +63,7 @@ impl LevelItem {
                 });
                 world.spawn((
                     Thing {
-                        color: BLUE,
+                        color: BLACK,
                         destructable: false,
                         physics_handle,
                     },
@@ -78,7 +78,7 @@ impl LevelItem {
                     collider: Collider::Circle {
                         radius: self.half_size.x,
                     },
-                    gravity_multiplier: 0.0,
+                    gravity_multiplier: 1.0,
                     friction: 0.9,
                 });
                 world.spawn((
@@ -197,6 +197,7 @@ async fn main() {
 
     let player_half_width = 15.;
     let player_half_height = 7.5;
+    let player_spawn_offset = 300.;
     let setup = |level: &Level, world: &mut World, physics: &mut Physics| -> Entity {
         for thing in &level.things {
             thing.spawn(physics, world);
@@ -206,7 +207,7 @@ async fn main() {
 
         let physics_handle = physics.push(PhysicsObject::new(
             1.0,
-            Vec2::new(0., water_level + 200.),
+            Vec2::new(0., water_level + player_spawn_offset),
             Collider::Rectangle {
                 half_width: player_half_width / 2.,
                 half_height: player_half_height / 2.,
@@ -301,11 +302,8 @@ async fn main() {
                 let player_physics = physics.get_mut(player_thing.physics_handle);
                 // Player controls
                 if player_center.y < water_level {
-                    player_physics.gravity_multiplier = 1.0;
                     // player_thing.velocity.y += gravity_out_of_water;
                 } else {
-                    player_physics.gravity_multiplier = 0.0;
-
                     let player_acceleration = 0.1;
                     if is_key_down(KeyCode::Left) || is_key_down(KeyCode::A) {
                         player_physics.apply_force(Vec2::new(-player_acceleration, 0.));
@@ -322,8 +320,6 @@ async fn main() {
                         player_physics.apply_force(Vec2::new(0., player_acceleration));
                     }
                 }
-
-                let player_velocity = player_physics.velocity();
 
                 // Check the player against walls
                 /*
@@ -366,7 +362,7 @@ async fn main() {
                         + Vec2::new(-missile_size.x / 2., missile_size.y / 2.);
 
                     let acceleration_direction = Vec2::new(player.direction_x, 0.4) * 0.1;
-                    player_physics.apply_force(-acceleration_direction * 20.);
+                    player_physics.apply_force(-acceleration_direction * 10.);
 
                     let mut physics_object = PhysicsObject::new(
                         2.0,
@@ -399,7 +395,7 @@ async fn main() {
                     Missile {},
                     Drawable::Missile,
                     Accelerator {
-                        amount: Vec2::new(direction * 0.05, 0.0),
+                        amount: Vec2::new(direction * 0.07, 0.0),
                     },
                 ));
             }
@@ -500,10 +496,10 @@ async fn main() {
             camera_zoom = camera_zoom.clamp(0.1, 10.);
 
             if is_key_pressed(KeyCode::P) {
+                // Sort by top of thing
                 level.things.sort_by(|a, b| {
-                    a.position
-                        .y
-                        .partial_cmp(&b.position.y)
+                    (a.position.y - a.half_size.y)
+                        .partial_cmp(&(b.position.y - b.half_size.y))
                         .unwrap_or(Ordering::Equal)
                 });
 
@@ -522,7 +518,8 @@ async fn main() {
         // ===================== DRAW =========================
         clear_background(BLACK);
 
-        if player_center.y < water_level + 4. {
+        let above_water = player_center.y < water_level + 4.;
+        if above_water {
             // Draw sky
             draw_rectangle(
                 0. - screen_width / camera_zoom, //-main_area_width / 2.,
@@ -531,20 +528,20 @@ async fn main() {
                 water_level + 3000.,
                 Color::new(106. / 255., 183. / 255., 206. / 255., 1.),
             );
-            // Draw water
+        } else {
+            // Draw underwater background
+            draw_rectangle(
+                0. - screen_width / camera_zoom, //-main_area_width / 2.,
+                -3000.,
+                screen_width / camera_zoom * 2., //main_area_width,
+                water_level + 3000.,
+                Color::new(20. / 255., 50. / 255., 70. / 255., 1.),
+            );
+
             draw_rectangle(
                 0. - screen_width / camera_zoom, //-main_area_width / 2.,
                 water_level,
-                screen_width / camera_zoom * 2., //main_area_width,
-                400000.,
-                Color::new(27. / 255., 66. / 255., 81. / 255., 1.),
-            );
-        } else {
-            // Draw water
-            draw_rectangle(
-                -main_area_width / 2.,
-                water_level,
-                main_area_width,
+                screen_width / camera_zoom * 2., // main_area_width,
                 30000.,
                 Color::new(27. / 255., 66. / 255., 81. / 255., 1.),
             );
@@ -556,20 +553,12 @@ async fn main() {
         let color_lerp = depth_lerp.min(0.3);
         let draw_color =
             (Vec3::new(BLUE.r, BLUE.g, BLUE.b) - player_color_vec) * color_lerp + player_color_vec;
-
-        // Draw player
-        draw_rectangle(
-            player_rect.x,
-            player_rect.y,
-            player_rect.w,
-            player_rect.h,
-            Color::new(draw_color.x, draw_color.y, draw_color.z, 1.0 - color_lerp),
-        );
         */
 
         // Draw entities
         for (_entity, (thing, drawable)) in &mut world.query::<(&Thing, &Drawable)>() {
             let physics_object = physics.get(thing.physics_handle);
+
             match drawable {
                 Drawable::Enemy => match physics_object.collider {
                     Collider::Circle { radius } => {
@@ -598,6 +587,18 @@ async fn main() {
                     _ => unimplemented!(),
                 },
             }
+        }
+
+        // Draw water here to draw over entities
+        if above_water {
+            // Draw water
+            draw_rectangle(
+                0. - screen_width / camera_zoom, //-main_area_width / 2.,
+                water_level,
+                screen_width / camera_zoom * 2., //main_area_width,
+                400000.,
+                Color::new(27. / 255., 66. / 255., 81. / 255., 1.),
+            );
         }
 
         if let Some(rect) = editor_start_drag {
