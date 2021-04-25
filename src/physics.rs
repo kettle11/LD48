@@ -10,10 +10,31 @@ pub struct PhysicsObject {
     pub collider: Collider,
     pub gravity_multiplier: f32,
 }
+impl PhysicsObject {
+    pub fn new(mass: f32, position: Vec2, collider: Collider, gravity_multiplier: f32) -> Self {
+        Self {
+            mass,
+            position,
+            last_position: position,
+            collider,
+            gravity_multiplier,
+        }
+    }
+}
+
 pub struct Physics {
     pub objects: Vec<PhysicsObject>,
     pub gravity: f32,
     pub friction: f32,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct PhysicsHandle(usize);
+
+impl PhysicsHandle {
+    pub const fn empty() -> Self {
+        Self(0)
+    }
 }
 
 impl Physics {
@@ -25,8 +46,21 @@ impl Physics {
         }
     }
 
-    pub fn push(&mut self, physics_object: PhysicsObject) {
+    pub fn get(&self, physics_handle: PhysicsHandle) -> &PhysicsObject {
+        &self.objects[physics_handle.0]
+    }
+
+    pub fn get_mut(&mut self, physics_handle: PhysicsHandle) -> &mut PhysicsObject {
+        &mut self.objects[physics_handle.0]
+    }
+
+    pub fn push(&mut self, physics_object: PhysicsObject) -> PhysicsHandle {
         self.objects.push(physics_object);
+        PhysicsHandle(self.objects.len() - 1)
+    }
+
+    pub fn apply_force(&mut self, handle: PhysicsHandle, amount: Vec2) {
+        self.objects[handle.0].last_position -= amount;
     }
 
     pub fn run(&mut self) {

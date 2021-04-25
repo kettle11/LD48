@@ -18,9 +18,6 @@ enum ThingType {
 }
 #[derive(Clone, Debug)]
 struct Thing {
-    rect: Rect,
-    velocity: Vec2,
-    acceleration: Vec2,
     color: Color,
     /// If this is 1.0 that means there's no friction
     friction: f32,
@@ -28,38 +25,25 @@ struct Thing {
     /// Set to infinity for kinematic objects
     mass: f32,
     thing_type: ThingType,
+    physics_handle: PhysicsHandle,
 }
 
 pub(crate) const KINEMATIC_LEVEL_PIECE: Thing = Thing {
-    rect: Rect {
-        x: 0.,
-        y: 0.,
-        w: 0.,
-        h: 0.,
-    },
-    velocity: Vec2::ZERO,
-    acceleration: Vec2::ZERO,
     color: BLACK,
     friction: 1.0,
     destructable: false,
     mass: f32::INFINITY,
     thing_type: ThingType::Rock,
+    physics_handle: PhysicsHandle::empty(),
 };
 
 pub(crate) const ENEMY: Thing = Thing {
-    rect: Rect {
-        x: 0.,
-        y: 0.,
-        w: 100.,
-        h: 100.,
-    },
-    velocity: Vec2::ZERO,
-    acceleration: Vec2::ZERO,
     color: GREEN,
     friction: 0.90,
     destructable: true,
     mass: 1.4,
     thing_type: ThingType::Enemy,
+    physics_handle: PhysicsHandle::empty(),
 };
 
 trait QuickFormat: Debug {
@@ -69,7 +53,7 @@ trait QuickFormat: Debug {
 impl QuickFormat for Thing {
     fn append(&self, s: &mut String) {
         write!(s, "Thing {{rect:").unwrap();
-        self.rect.append(s);
+        // self.rect.append(s);
         match self.thing_type {
             ThingType::Rock => {
                 write!(s, ",..KINEMATIC_LEVEL_PIECE").unwrap();
@@ -136,12 +120,12 @@ struct Level {
 async fn main() {
     // let font = load_ttf_font("assets/OrelegaOne-Regular.ttf").await;
 
-    let gravity_out_of_water = 0.2;
+    // let gravity_out_of_water = 0.2;
 
     let water_level = 300.;
 
     let max_color_lerp_depth = 3000.;
-
+    //
     let min_camera_zoom = 0.5;
     let max_camera_zoom = 2.0;
     let mut camera_focal_y = screen_height() / 2.0;
@@ -151,27 +135,37 @@ async fn main() {
 
     let mut level = levels::get_level();
 
-    let setup = |level: &Level, world: &mut World| -> Entity {
+    let setup = |level: &Level, world: &mut World, physics: &mut Physics| -> Entity {
         for thing in &level.things {
             let thing = thing.clone();
             world.spawn((thing,));
         }
 
+        let physics_handle = physics.push(PhysicsObject::new(
+            1.0,
+            Vec2::new(0., water_level),
+            Collider::Rectangle {
+                half_width: 15.,
+                half_height: 7.5,
+            },
+            1.0,
+        ));
         world.spawn((
             Player {},
             Thing {
-                rect: Rect::new(0., water_level, 30., 15.),
-                velocity: Vec2::new(0.02, 0.02),
-                acceleration: Vec2::ZERO,
                 color: RED,
                 friction: 0.985,
                 destructable: false,
                 mass: 1.0,
                 thing_type: ThingType::Player,
+                physics_handle: physics_handle,
             },
         ))
     };
-    let mut player_entity = setup(&level, &mut world);
+    let mut physics = Physics::new();
+    physics.gravity = 0.2;
+
+    let mut player_entity = setup(&level, &mut world, &mut physics);
     let missile_size = Vec2::new(20., 10.);
     let mut entities_to_despawn = Vec::new();
 
@@ -190,13 +184,22 @@ async fn main() {
         let screen_width = screen_width();
         let screen_height = screen_height();
 
+        let player_center = {
+            let mut query = world
+                .query_one::<(&Player, &mut Thing)>(player_entity)
+                .unwrap();
+            let (_player, player_thing) = query.get().unwrap();
+            let p = physics.get(player_thing.physics_handle);
+            p.position
+        };
+
         // Toggle the level editor
         if is_key_pressed(KeyCode::E) {
             in_level_editor = !in_level_editor;
             if in_level_editor {
                 info!("EDITOR ENABLED");
                 world.clear();
-                player_entity = setup(&level, &mut world);
+                player_entity = setup(&level, &mut world, &mut physics);
                 info!("LEVEL THINGS: {:?}", level.things.len());
             } else {
                 info!("EDITOR DISABLED");
@@ -206,185 +209,56 @@ async fn main() {
 
         if !in_level_editor {
             // ================= UPDATE =========================
-            let player_center = {
-                let mut query = world
-                    .query_one::<(&Player, &mut Thing)>(player_entity)
-                    .unwrap();
-                let (_player, player_thing) = query.get().unwrap();
-                player_thing.rect.point() + player_thing.rect.size() / 2.
-            };
 
-            info!("PLAYER CENTER: {:?}", player_center);
-
-            // Physics and update logic for most things.
-            {
-                let mut things0 = world.query::<(Option<&Missile>, &Thing)>();
-
-                for (thing0_entity, (missile0, thing0)) in things0.iter() {
-                    if missile0.is_some() {
-                        if thing0.rect.left() < left_wall {
-                            entities_to_despawn.push(thing0_entity);
-                            continue;
-                        }
-
-                        if thing0.rect.x + thing0.rect.w > right_wall {
-                            entities_to_despawn.push(thing0_entity);
-                            continue;
-                        }
-                    }
-
-                    // Pursue the player
-                    if thing0.thing_type == ThingType::Enemy {
-                        let enemy_center = thing0.rect.point() + thing0.rect.size() / 2.;
-                        let diff = player_center - enemy_center;
-
-                        // Chase range.
-                        if diff.length() < 1000. {
-                            acceleration_to_apply.push((thing0_entity, diff.normalize() * 0.1));
-                        }
-                    }
-
-                    let mut things1 = world.query::<(Option<&Missile>, &Thing)>();
-
-                    for (thing1_entity, (missile1, thing1)) in things1.iter() {
-                        // We're doing duplicate checks.
-                        // This an easy way to rule those out.
-                        // But it'd be better to just not iterate the duplicate checks.
-                        if thing0_entity < thing1_entity {
-                            // Two kinematic objects won't do anything in a collision.
-                            if thing0.mass == f32::INFINITY && thing1.mass == f32::INFINITY {
-                                continue;
-                            }
-
-                            // Missiles can't collide with player
-                            if (missile0.is_some() && thing1_entity == player_entity)
-                                || (missile1.is_some() && thing0_entity == player_entity)
-                            {
-                                continue;
-                            }
-
-                            // Check for collision
-                            if let Some(intersection) = thing1.rect.intersect(thing0.rect) {
-                                // Collides!
-                                if missile0.is_some() {
-                                    entities_to_despawn.push(thing0_entity);
-
-                                    if thing1.destructable {
-                                        entities_to_despawn.push(thing1_entity);
-                                    }
-                                }
-                                if missile1.is_some() {
-                                    entities_to_despawn.push(thing1_entity);
-
-                                    if thing0.destructable {
-                                        entities_to_despawn.push(thing0_entity);
-                                    }
-                                } else {
-                                    // Collision response
-
-                                    let center0 = thing0.rect.point() + thing0.rect.size() / 2.;
-                                    let center1 = thing1.rect.point() + thing1.rect.size() / 2.;
-
-                                    let center_diff = center0 - center1;
-
-                                    let mut collision_overlap = intersection.size();
-
-                                    let mass_ratio = (thing0.mass / thing1.mass).min(1.0);
-
-                                    if collision_overlap.x.abs() < collision_overlap.y.abs() {
-                                        collision_overlap.y = 0.;
-                                    } else {
-                                        collision_overlap.x = 0.;
-                                    }
-
-                                    if center_diff.y < 0. {
-                                        collision_overlap.y *= -1.
-                                    }
-
-                                    if center_diff.x < 0. {
-                                        collision_overlap.x *= -1.
-                                    }
-
-                                    collision_responses.push((
-                                        thing1_entity,
-                                        (-collision_overlap / 2.) * mass_ratio,
-                                    ));
-                                    collision_responses.push((
-                                        thing0_entity,
-                                        collision_overlap / 2. * (1.0 - mass_ratio),
-                                    ));
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
+            // info!("PLAYER CENTER: {:?}", player_center);
 
             for entity in entities_to_despawn.drain(..) {
                 let _ = world.despawn(entity);
             }
 
-            for (entity, response) in collision_responses.drain(..) {
-                if response.length() < 0.001 {
-                    continue;
-                }
-                if let Ok(mut thing) = world.get_mut::<Thing>(entity) {
-                    if thing.mass != f32::INFINITY {
-                        let response_normal = response.normalize();
-
-                        let velocity_response =
-                            thing.velocity.dot(response_normal) * -response_normal;
-                        thing.velocity += velocity_response;
-                        thing.rect = thing.rect.offset(response)
-                    }
-                }
-            }
-
-            for (entity, acceleration) in acceleration_to_apply.drain(..) {
-                if let Ok(mut thing) = world.get_mut::<Thing>(entity) {
-                    if thing.mass != f32::INFINITY {
-                        thing.velocity += acceleration;
-                    }
-                }
-            }
-
-            // Move entities
-            for (_, (thing,)) in world.query_mut::<(&mut Thing,)>() {
-                thing.velocity += thing.acceleration;
-                thing.velocity *= thing.friction;
-                thing.rect = thing.rect.offset(thing.velocity);
-            }
-
-            let mut missile_to_spawn = None;
             {
                 let mut query = world
                     .query_one::<(&Player, &mut Thing)>(player_entity)
                     .unwrap();
                 let (_player, player_thing) = query.get().unwrap();
-                player_thing.rect = player_thing.rect.offset(player_thing.velocity);
 
+                let player_physics = physics.get_mut(player_thing.physics_handle);
                 // Player controls
-                if player_thing.rect.bottom() < water_level {
-                    player_thing.velocity.y += gravity_out_of_water;
+                if player_center.y < water_level {
+                    player_physics.gravity_multiplier = 1.0;
+                    // player_thing.velocity.y += gravity_out_of_water;
                 } else {
+                    player_physics.gravity_multiplier = 0.0;
+
                     let player_acceleration = 0.1;
                     if is_key_down(KeyCode::Left) || is_key_down(KeyCode::A) {
-                        player_thing.velocity.x -= player_acceleration;
+                        physics.apply_force(
+                            player_thing.physics_handle,
+                            Vec2::new(-player_acceleration, 0.),
+                        );
                     }
                     if is_key_down(KeyCode::Right) || is_key_down(KeyCode::D) {
-                        player_thing.velocity.x += player_acceleration;
+                        physics.apply_force(
+                            player_thing.physics_handle,
+                            Vec2::new(player_acceleration, 0.),
+                        );
                     }
                     if is_key_down(KeyCode::Up) || is_key_down(KeyCode::W) {
-                        player_thing.velocity.y -= player_acceleration;
+                        physics.apply_force(
+                            player_thing.physics_handle,
+                            Vec2::new(0., -player_acceleration),
+                        );
                     }
                     if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
-                        player_thing.velocity.y += player_acceleration;
+                        physics.apply_force(
+                            player_thing.physics_handle,
+                            Vec2::new(0., player_acceleration),
+                        );
                     }
-                    player_thing.velocity *= 0.985;
                 }
 
                 // Check the player against walls
+                /*
                 if player_thing.rect.left() < left_wall {
                     player_thing.rect.x = left_wall;
                     player_thing.velocity.x = 0.;
@@ -393,22 +267,22 @@ async fn main() {
                 if player_thing.rect.x + player_thing.rect.w > right_wall {
                     player_thing.rect.x = right_wall - player_thing.rect.w;
                     player_thing.velocity.x = 0.;
-                }
+                }*/
 
                 // Zoom the camera as the player goes deeper at the start.
-                let depth_lerp = ((player_thing.rect.y - water_level) / max_color_lerp_depth)
+                let depth_lerp = ((player_center.y - water_level) / max_color_lerp_depth)
                     .min(1.0)
                     .max(0.0);
 
                 camera_zoom = (max_camera_zoom - min_camera_zoom) * depth_lerp + min_camera_zoom;
 
                 let camera_buffer = (screen_height / camera_zoom) * 2.0 * 0.3;
-                if player_thing.rect.bottom() > camera_focal_y + camera_buffer {
-                    camera_focal_y = player_thing.rect.bottom() - camera_buffer;
+                if player_center.y > camera_focal_y + camera_buffer {
+                    camera_focal_y = player_center.y - camera_buffer;
                 }
 
-                if player_thing.rect.y < camera_focal_y - camera_buffer {
-                    camera_focal_y = player_thing.rect.y + camera_buffer;
+                if player_center.y < camera_focal_y - camera_buffer {
+                    camera_focal_y = player_center.y + camera_buffer;
                 }
 
                 set_camera(&Camera2D {
@@ -417,6 +291,7 @@ async fn main() {
                     ..Default::default()
                 });
 
+                /*
                 // Fire missile
                 if is_key_pressed(KeyCode::Space) {
                     let new_position = (player_thing.rect.point()
@@ -439,15 +314,28 @@ async fn main() {
                         friction: 1.0,
                         destructable: false,
                         mass: 2.0,
+                        physics_handle: PhysicsHandle::empty(),
                         thing_type: ThingType::Missile,
                     });
                 }
+                */
             }
 
             // Separated out to avoid borrow checker complaints.
+            /*
             if let Some(missile_to_spawn) = missile_to_spawn.take() {
                 world.spawn((missile_to_spawn, Missile {}));
             }
+
+            */
+
+            set_camera(&Camera2D {
+                target: vec2(0., camera_focal_y),
+                zoom: Vec2::new(camera_zoom / screen_width, -camera_zoom / screen_height),
+                ..Default::default()
+            });
+
+            physics.run();
         } else {
             // ===================== LEVEL EDITOR =========================
 
@@ -483,8 +371,8 @@ async fn main() {
                             .query_one::<(&Player, &mut Thing)>(player_entity)
                             .unwrap();
                         let (_, player_thing) = query.get().unwrap();
-                        player_thing.rect.x = camera_position.x;
-                        player_thing.rect.y = camera_position.y;
+                        let p = physics.get_mut(player_thing.physics_handle);
+                        p.position = camera_position;
                         camera_focal_y = camera_position.y;
                     }
                 }
@@ -493,6 +381,7 @@ async fn main() {
                         rect.w = camera_position.x - rect.x;
                         rect.h = camera_position.y - rect.y;
 
+                        /*
                         if is_mouse_button_released(MouseButton::Left) {
                             if rect.w < 0. {
                                 rect.x = rect.right();
@@ -525,6 +414,7 @@ async fn main() {
                             world.spawn((thing,));
                             editor_start_drag = None;
                         }
+                        */
                     } else {
                         if is_mouse_button_down(MouseButton::Left) {
                             editor_start_drag = Some(Rect {
@@ -541,6 +431,7 @@ async fn main() {
 
             camera_zoom = camera_zoom.clamp(0.1, 10.);
 
+            /*
             if is_key_pressed(KeyCode::P) {
                 level
                     .things
@@ -556,28 +447,39 @@ async fn main() {
                 s.push_str("]}}");
                 info!("{}", s);
             }
+            */
         }
 
         // ===================== DRAW =========================
         clear_background(BLACK);
 
-        // Draw water
-        draw_rectangle(
-            -main_area_width / 2.,
-            0.,
-            main_area_width,
-            400000.,
-            Color::new(27. / 255., 66. / 255., 81. / 255., 1.),
-        );
-
-        // Draw sky
-        draw_rectangle(
-            -main_area_width / 2.,
-            -3000.,
-            main_area_width,
-            water_level + 3000.,
-            Color::new(106. / 255., 183. / 255., 206. / 255., 1.),
-        );
+        if player_center.y < water_level + 4. {
+            // Draw sky
+            draw_rectangle(
+                0. - screen_width / camera_zoom, //-main_area_width / 2.,
+                -3000.,
+                screen_width / camera_zoom * 2., //main_area_width,
+                water_level + 3000.,
+                Color::new(106. / 255., 183. / 255., 206. / 255., 1.),
+            );
+            // Draw water
+            draw_rectangle(
+                0. - screen_width / camera_zoom, //-main_area_width / 2.,
+                water_level,
+                screen_width / camera_zoom * 2., //main_area_width,
+                400000.,
+                Color::new(27. / 255., 66. / 255., 81. / 255., 1.),
+            );
+        } else {
+            // Draw water
+            draw_rectangle(
+                -main_area_width / 2.,
+                water_level,
+                main_area_width,
+                30000.,
+                Color::new(27. / 255., 66. / 255., 81. / 255., 1.),
+            );
+        }
 
         /*
         // Calculate color change to simulate less light.
@@ -598,6 +500,7 @@ async fn main() {
 
         // Draw entities
         for (_entity, (thing,)) in &mut world.query::<(&Thing,)>() {
+            let physics_object = physics.get(thing.physics_handle);
             match thing.thing_type {
                 /*  ThingType::Enemy => {
                     draw_circle(
@@ -607,15 +510,21 @@ async fn main() {
                         thing.color,
                     );
                 }*/
-                _ => {
-                    draw_rectangle(
-                        thing.rect.x,
-                        thing.rect.y,
-                        thing.rect.w,
-                        thing.rect.h,
-                        thing.color,
-                    );
-                }
+                _ => match physics_object.collider {
+                    Collider::Rectangle {
+                        half_width,
+                        half_height,
+                    } => {
+                        draw_rectangle(
+                            physics_object.position.x - half_width,
+                            physics_object.position.y - half_height,
+                            half_width * 2.,
+                            half_height * 2.,
+                            thing.color,
+                        );
+                    }
+                    _ => unimplemented!(),
+                },
             }
         }
 
