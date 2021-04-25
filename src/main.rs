@@ -295,18 +295,26 @@ async fn main() {
     let player_half_width = 15.;
     let player_half_height = 7.5;
     let player_spawn_offset = 300.;
-    let setup = |level: &Level, world: &mut World, physics: &mut Physics| -> Entity {
+
+    let player_start = Vec2::new(0., water_level + player_spawn_offset);
+    let setup = |level: &Level,
+                 world: &mut World,
+                 physics: &mut Physics,
+                 respawn_timer: &mut u32,
+                 player_position: Vec2|
+     -> Entity {
         world.clear();
         physics.clear();
         for (index_in_level, thing) in level.things.iter().enumerate() {
             thing.spawn(physics, world, index_in_level);
         }
 
-        // Spawn player
+        *respawn_timer = RESPAWN_TIMER;
 
+        // Spawn player
         let physics_handle = physics.push(PhysicsObject::new(
             1.0,
-            Vec2::new(0., water_level + player_spawn_offset),
+            player_position,
             Collider::Rectangle {
                 half_width: player_half_width / 2.,
                 half_height: player_half_height / 2.,
@@ -324,14 +332,23 @@ async fn main() {
                 index_in_level: None,
             },
             // Player health
-            Health(10),
+            Health(0),
             Drawable::Player,
         ))
     };
     let mut physics = Physics::new(water_level);
     physics.gravity = 0.2;
 
-    let mut player_entity = setup(&level, &mut world, &mut physics);
+    const RESPAWN_TIMER: u32 = 60 * 3;
+    let mut respawn_timer = RESPAWN_TIMER;
+
+    let mut player_entity = setup(
+        &level,
+        &mut world,
+        &mut physics,
+        &mut respawn_timer,
+        player_start,
+    );
     let missile_size = Vec2::new(10., 5.);
     let mut entities_to_despawn = Vec::new();
 
@@ -374,7 +391,13 @@ async fn main() {
             in_level_editor = !in_level_editor;
             if in_level_editor {
                 info!("EDITOR ENABLED");
-                player_entity = setup(&level, &mut world, &mut physics);
+                player_entity = setup(
+                    &level,
+                    &mut world,
+                    &mut physics,
+                    &mut respawn_timer,
+                    player_start,
+                );
                 info!("LEVEL THINGS: {:?}", level.things.len());
             } else {
                 info!("EDITOR DISABLED");
@@ -447,7 +470,7 @@ async fn main() {
                     }
                 } else {
                     // Sink when dead
-                    p.apply_force(Vec2::Y * 0.02)
+                    p.apply_force(Vec2::Y * 0.02);
                 }
             }
 
@@ -567,7 +590,8 @@ async fn main() {
                     }
                 } else {
                     // Sink when dead
-                    player_physics.apply_force(Vec2::Y * 0.02)
+                    player_physics.apply_force(Vec2::Y * 0.02);
+                    respawn_timer = respawn_timer.saturating_sub(1);
                 }
             }
 
@@ -605,23 +629,21 @@ async fn main() {
                 }
             }
 
-            // Check if the player is dead
-            {
-                let player_health = {
-                    let mut query = world
-                        .query_one::<(&mut Player, &Health)>(player_entity)
-                        .unwrap();
-                    let (player, health) = query.get().unwrap();
-                    health.0
-                };
-
-                if player_health == 0 {
-                    info!("THE PLAYER IS DEAD");
-                }
-            }
-
             for explosion in explosions_to_spawn.drain(..) {
                 world.spawn((explosion,));
+            }
+
+            // Respawn the player
+            if respawn_timer == 0 {
+                let closest_checkpoint_position =
+                    { for (entity, (checkpoint,)) in &mut world.query::<(&CheckPoint,)>() {} };
+                player_entity = setup(
+                    &level,
+                    &mut world,
+                    &mut physics,
+                    &mut respawn_timer,
+                    player_start,
+                );
             }
         } else {
             // ===================== LEVEL EDITOR =========================
@@ -688,7 +710,8 @@ async fn main() {
                                 level.things.swap_remove(index);
 
                                 // Just reload the entire level, but preserve the player position.
-                                player_entity = setup(&level, &mut world, &mut physics);
+                                player_entity =
+                                    setup(&level, &mut world, &mut physics, &mut respawn_timer);
                                 let mut query = world
                                     .query_one::<(&mut Player, &mut Thing)>(player_entity)
                                     .unwrap();
@@ -988,6 +1011,18 @@ async fn main() {
             },
         );
         */
+
+        if respawn_timer != RESPAWN_TIMER {
+            let fade = 1.0 - respawn_timer as f32 / RESPAWN_TIMER as f32;
+            set_default_camera();
+            draw_rectangle(
+                0.,
+                0.,
+                screen_width,
+                screen_height,
+                Color::new(0., 0., 0., fade),
+            );
+        }
 
         for entity in entities_to_despawn.drain(..) {
             let _ = world.despawn(entity);
