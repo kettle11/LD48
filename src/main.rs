@@ -43,6 +43,8 @@ struct LevelItem {
     half_size: Vec2,
 }
 
+struct CheckPoint {}
+
 impl LevelItem {
     pub fn spawn(&self, physics: &mut Physics, world: &mut World, index_in_level: usize) {
         match self.thing_type {
@@ -93,9 +95,9 @@ impl LevelItem {
                     },
                     Drawable::Enemy,
                     Enemy {
-                        health,
                         acceleration_direction: -Vec2::X,
                     },
+                    Health(health),
                 ));
             }
             _ => unimplemented!(),
@@ -169,8 +171,9 @@ impl QuickFormat for Color {
 struct Player {
     direction_x: f32,
 }
+
+struct Health(u32);
 struct Enemy {
-    health: u32,
     acceleration_direction: Vec2,
 }
 
@@ -370,10 +373,12 @@ async fn main() {
             // info!("PLAYER CENTER: {:?}", player_center);
 
             // Make enemies follow player
-            for (_entity, (thing, enemy)) in &mut world.query::<(&Thing, &mut Enemy)>() {
+            for (_entity, (thing, enemy, health)) in
+                &mut world.query::<(&Thing, &mut Enemy, &Health)>()
+            {
                 let p = physics.get_mut(thing.physics_handle).unwrap();
 
-                if enemy.health > 0 {
+                if health.0 > 0 {
                     let diff = player_center - p.position;
                     enemy.acceleration_direction = diff;
                     let distance = diff.length();
@@ -731,9 +736,13 @@ async fn main() {
         */
 
         // Draw entities
-        for (_entity, (thing, drawable, enemy, player)) in
-            &mut world.query::<(&Thing, &Drawable, Option<&Enemy>, Option<&Player>)>()
-        {
+        for (_entity, (thing, drawable, enemy, player, health)) in &mut world.query::<(
+            &Thing,
+            &Drawable,
+            Option<&Enemy>,
+            Option<&Player>,
+            Option<&Health>,
+        )>() {
             let physics_object = physics.get(thing.physics_handle);
 
             if let Some(physics_object) = physics_object {
@@ -775,7 +784,7 @@ async fn main() {
                             let direction = enemy.acceleration_direction.normalize();
                             let rotation = direction.angle_between(-Vec2::X);
 
-                            let texture = if enemy.health <= 0 {
+                            let texture = if health.unwrap().0 <= 0 {
                                 dead_tooth_fish_texture
                             } else {
                                 tooth_fish_texture
@@ -833,7 +842,9 @@ async fn main() {
 
             if !explosion.damaged {
                 explosion.damaged = true;
-                for (_entity, (thing, enemy)) in &mut world.query::<(&Thing, &mut Enemy)>() {
+                for (_entity, (thing, enemy, health)) in
+                    &mut world.query::<(&Thing, &mut Enemy, &mut Health)>()
+                {
                     let p = physics.get_mut(thing.physics_handle).unwrap();
                     let diff = p.position - explosion.center;
 
@@ -855,7 +866,7 @@ async fn main() {
                         if diff.length_squared() < distance_squared {
                             // Kill it!
                             p.mass = 0.5;
-                            enemy.health = enemy.health.saturating_sub(1);
+                            health.0 = health.0.saturating_sub(1);
                         }
                     }
                 }
