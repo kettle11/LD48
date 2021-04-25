@@ -129,30 +129,30 @@ impl Physics {
                     half_height: f32,
                     mass_ratio: f32,
                 ) {
-                    let diff = *rect_position - *circle_position;
-                    let width_sum = radius + half_width;
-                    let height_sum = radius + half_height;
+                    let diff = *circle_position - *rect_position;
+                    let circle_distance = (diff).abs();
+                    let halfs = Vec2::new(half_width + radius, half_height + radius);
+                    let offsets = (circle_distance - halfs) * diff.signum();
 
-                    let horizontal_penetration = width_sum - diff.x.abs();
-                    let vertical_penetration = height_sum - diff.y.abs();
-
-                    if horizontal_penetration > 0. && vertical_penetration > 0. {
-                        let offset_horizontal =
-                            Vec2::new(-horizontal_penetration * diff.x.signum(), 0.);
-                        let offset_vertical =
-                            Vec2::new(0., -vertical_penetration * diff.y.signum());
-
-                        let diff = horizontal_penetration - vertical_penetration;
-
-                        let offset = if diff < 0. {
-                            // Push apart along y
-                            offset_horizontal
+                    if !(circle_distance.x > halfs.x) && !(circle_distance.y > halfs.y) {
+                        if circle_distance.x <= half_width {
+                            circle_position.y -= offsets.y * mass_ratio;
+                            rect_position.y += offsets.y * (1.0 - mass_ratio);
+                        } else if circle_distance.y <= half_height {
+                            circle_position.x -= offsets.x * mass_ratio;
+                            rect_position.x += offsets.x * (1.0 - mass_ratio);
                         } else {
-                            offset_vertical
-                        };
+                            let corner_distance = (circle_distance.x - half_width).powf(2.)
+                                + (circle_distance.y - half_height).powf(2.);
+                            let radius_squared = radius.powf(2.);
+                            if corner_distance <= radius_squared {
+                                let offset = (corner_distance.sqrt() - radius_squared.sqrt()).abs();
+                                let offsets = offset * -diff.normalize();
 
-                        *circle_position += offset * mass_ratio;
-                        *rect_position -= offset * (1.0 - mass_ratio);
+                                *circle_position -= offsets * mass_ratio;
+                                *rect_position += offsets * (1.0 - mass_ratio);
+                            }
+                        }
                     }
                 }
 

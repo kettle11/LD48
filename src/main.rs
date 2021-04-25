@@ -16,6 +16,13 @@ enum ThingType {
     Missile,
     Enemy,
 }
+
+enum Drawable {
+    Rock,
+    Player,
+    Enemy,
+}
+
 #[derive(Clone, Debug)]
 struct Thing {
     color: Color,
@@ -23,13 +30,6 @@ struct Thing {
     destructable: bool,
     physics_handle: PhysicsHandle,
 }
-
-pub(crate) const KINEMATIC_LEVEL_PIECE: Thing = Thing {
-    color: BLACK,
-    destructable: false,
-
-    physics_handle: PhysicsHandle::empty(),
-};
 
 pub(crate) const ENEMY: Thing = Thing {
     color: GREEN,
@@ -42,11 +42,6 @@ struct LevelItem {
     position: Vec2,
     thing_type: ThingType,
     half_size: Vec2,
-}
-
-enum Drawable {
-    Rock,
-    Player,
 }
 
 impl LevelItem {
@@ -73,6 +68,25 @@ impl LevelItem {
                     Drawable::Rock,
                 ));
             }
+            ThingType::Enemy => {
+                let physics_handle = physics.push(PhysicsObject {
+                    mass: 2.0,
+                    position: self.position,
+                    last_position: self.position,
+                    collider: Collider::Circle {
+                        radius: self.half_size.x,
+                    },
+                    gravity_multiplier: 0.0,
+                });
+                world.spawn((
+                    Thing {
+                        color: GREEN,
+                        destructable: false,
+                        physics_handle,
+                    },
+                    Drawable::Enemy,
+                ));
+            }
             _ => unimplemented!(),
         }
     }
@@ -84,14 +98,16 @@ trait QuickFormat: Debug {
 
 impl QuickFormat for LevelItem {
     fn append(&self, s: &mut String) {
-        write!(s, "LevelItem {{rect:").unwrap();
-        // self.rect.append(s);
+        write!(s, "LevelItem {{position:").unwrap();
+        self.position.append(s);
+        write!(s, ",half_size:").unwrap();
+        self.half_size.append(s);
         match self.thing_type {
             ThingType::Rock => {
-                write!(s, ",..KINEMATIC_LEVEL_PIECE").unwrap();
+                write!(s, ",thing_type:ThingType::Rock").unwrap();
             }
             ThingType::Enemy => {
-                write!(s, ",..ENEMY").unwrap();
+                write!(s, ",thing_type:ThingType::Enemy").unwrap();
             }
             _ => unreachable!(),
         }
@@ -429,6 +445,11 @@ async fn main() {
                                     half_size: rect.size() / 2.,
                                     thing_type: ThingType::Rock,
                                 },
+                                3 => LevelItem {
+                                    position: rect.point() + rect.size() / 2.,
+                                    half_size: rect.size() / 2.,
+                                    thing_type: ThingType::Enemy,
+                                },
                                 _ => unimplemented!(),
                             };
                             level_item.spawn(&mut physics, &mut world);
@@ -451,11 +472,13 @@ async fn main() {
 
             camera_zoom = camera_zoom.clamp(0.1, 10.);
 
-            /*
             if is_key_pressed(KeyCode::P) {
-                level
-                    .things
-                    .sort_by(|a, b| a.rect.y.partial_cmp(&b.rect.y).unwrap_or(Ordering::Equal));
+                level.things.sort_by(|a, b| {
+                    a.position
+                        .y
+                        .partial_cmp(&b.position.y)
+                        .unwrap_or(Ordering::Equal)
+                });
 
                 let mut s =
                     "use crate::*;\npub(crate) fn get_level() -> Level { Level {\n things: vec!["
@@ -467,7 +490,6 @@ async fn main() {
                 s.push_str("]}}");
                 info!("{}", s);
             }
-            */
         }
 
         // ===================== DRAW =========================
@@ -522,14 +544,17 @@ async fn main() {
         for (_entity, (thing, drawable)) in &mut world.query::<(&Thing, &Drawable)>() {
             let physics_object = physics.get(thing.physics_handle);
             match drawable {
-                /*  ThingType::Enemy => {
-                    draw_circle(
-                        thing.rect.x + thing.rect.w / 2.,
-                        thing.rect.y + thing.rect.h / 2.,
-                        thing.rect.w / 2.,
-                        thing.color,
-                    );
-                }*/
+                Drawable::Enemy => match physics_object.collider {
+                    Collider::Circle { radius } => {
+                        draw_circle(
+                            physics_object.position.x,
+                            physics_object.position.y,
+                            radius,
+                            thing.color,
+                        );
+                    }
+                    _ => unimplemented!(),
+                },
                 _ => match physics_object.collider {
                     Collider::Rectangle {
                         half_width,
