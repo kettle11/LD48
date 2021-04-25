@@ -87,6 +87,7 @@ impl LevelItem {
                     },
                     Drawable::Enemy,
                     Enemy {
+                        dead: false,
                         acceleration_direction: -Vec2::X,
                     },
                 ));
@@ -163,6 +164,7 @@ struct Player {
     direction_x: f32,
 }
 struct Enemy {
+    dead: bool,
     acceleration_direction: Vec2,
 }
 
@@ -188,6 +190,7 @@ struct Explosion {
     pieces: Vec<ExplosionPiece>,
 }
 
+const EXPLOSION_RADIUS: f32 = 70.0;
 impl Explosion {
     pub fn spawn_piece(&mut self) {
         let max_radius = 20.;
@@ -204,7 +207,7 @@ impl Explosion {
 
         self.pieces.push(ExplosionPiece {
             position: self.center + Vec2::new(rand_x, rand_y),
-            radius: gen_range(20., 50.),
+            radius: gen_range(20., EXPLOSION_RADIUS - max_radius),
             color,
         })
     }
@@ -243,6 +246,7 @@ impl Explosion {
 }
 #[macroquad::main("Sub")]
 async fn main() {
+    let dead_tooth_fish_texture = load_texture("assets/DeadToothFish.png").await.unwrap();
     let tooth_fish_texture = load_texture("assets/ToothFish.png").await.unwrap();
     // let font = load_ttf_font("assets/OrelegaOne-Regular.ttf").await;
 
@@ -311,11 +315,14 @@ async fn main() {
     let mut acceleration_to_apply: Vec<(Entity, Vec2)> = Vec::new();
 
     let mut explosions_to_spawn = Vec::new();
+
+    /*
     // TEMPORARY
     world.spawn((Explosion::new(Vec2::new(
         0.,
         water_level + player_spawn_offset,
     )),));
+    */
 
     loop {
         //  let left_wall = -main_area_width / 2.;
@@ -354,11 +361,19 @@ async fn main() {
             // Make enemies follow player
             for (_entity, (thing, enemy)) in &mut world.query::<(&Thing, &mut Enemy)>() {
                 let p = physics.get_mut(thing.physics_handle).unwrap();
-                let diff = player_center - p.position;
-                enemy.acceleration_direction = diff;
-                let distance = diff.length();
-                if distance < 800. {
-                    p.apply_force(0.2 * diff.normalize())
+
+                if !enemy.dead {
+                    let diff = player_center - p.position;
+                    enemy.acceleration_direction = diff;
+                    let distance = diff.length();
+                    if distance < 800. {
+                        p.apply_force(0.2 * diff.normalize())
+                    }
+
+                    // Player damage checks could go here as well.
+                } else {
+                    // Sink when dead
+                    p.apply_force(Vec2::Y * 0.02)
                 }
             }
 
@@ -492,7 +507,7 @@ async fn main() {
             // Check for missile impacts
             for (entity, (thing, _missile)) in &mut world.query::<(&Thing, &Missile)>() {
                 if let Some(p) = physics.get(thing.physics_handle) {
-                    if p.last_collision_impact.length() > 2.0 {
+                    if p.last_collision_impact.length() > 0.5 {
                         // info!("MISSILE IMPACT: {:?}", p.last_collision_impact.length());
                         entities_to_despawn.push(entity);
                         explosions_to_spawn.push(Explosion::new(p.position));
@@ -712,11 +727,18 @@ async fn main() {
                 match drawable {
                     Drawable::Enemy => match physics_object.collider {
                         Collider::Circle { radius } => {
-                            let direction = enemy.unwrap().acceleration_direction.normalize();
+                            let enemy = enemy.unwrap();
+                            let direction = enemy.acceleration_direction.normalize();
                             let rotation = direction.angle_between(-Vec2::X);
 
+                            let texture = if enemy.dead {
+                                dead_tooth_fish_texture
+                            } else {
+                                tooth_fish_texture
+                            };
+
                             draw_texture_ex(
-                                tooth_fish_texture,
+                                texture,
                                 physics_object.position.x - radius,
                                 physics_object.position.y - radius,
                                 WHITE,
@@ -756,11 +778,37 @@ async fn main() {
             }
         }
 
-        // Draw explosions
+        // Draw and update explosions
         for (entity, explosion) in &mut world.query::<&mut Explosion>() {
             explosion.draw();
             if explosion.pieces.len() == 0 {
                 entities_to_despawn.push(entity);
+            }
+
+            // Check if an enemy is within an explosion
+            for (_entity, (thing, enemy)) in &mut world.query::<(&Thing, &mut Enemy)>() {
+                let p = physics.get_mut(thing.physics_handle).unwrap();
+                let diff = p.position - explosion.center;
+
+                let radius = match p.collider {
+                    Collider::Circle { radius } => radius,
+                    _ => unreachable!(),
+                };
+
+                let distance = EXPLOSION_RADIUS + radius;
+                let distance_squared = distance * distance;
+
+                const THRESHOLD: f32 = 500.;
+                const THRESHOLD_SQUARED: f32 = THRESHOLD * THRESHOLD;
+
+                if distance_squared < THRESHOLD_SQUARED {
+                    p.apply_force((distance_squared / THRESHOLD_SQUARED) * diff.normalize() * 2.);
+                    if diff.length_squared() < distance_squared {
+                        // Kill it!
+                        p.mass = 0.5;
+                        enemy.dead = true;
+                    }
+                }
             }
         }
 

@@ -3,6 +3,11 @@ pub(crate) fn get_level() -> Level {
     Level {
         things: vec![
             LevelItem {
+                position: Vec2::new(1521.5884, 436.8792),
+                half_size: Vec2::new(72.241516, 67.726425),
+                thing_type: ThingType::Enemy,
+            },
+            LevelItem {
                 position: Vec2::new(-5240.0, 4673.0),
                 half_size: Vec2::new(4980.0, 4220.0),
                 thing_type: ThingType::Rock,
