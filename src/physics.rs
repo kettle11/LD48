@@ -1,3 +1,5 @@
+use std::f32::INFINITY;
+
 use crate::*;
 pub enum Collider {
     Rectangle { half_width: f32, half_height: f32 },
@@ -48,6 +50,8 @@ pub struct Physics {
     pub friction: f32,
     /// Only apply gravity above water-level
     pub water_level: f32,
+    /// Only apply gravity above water-level
+    pub victory_water_level: f32,
     indirection: Vec<usize>,
     free_indirection_indices: Vec<usize>,
 }
@@ -62,12 +66,13 @@ impl PhysicsHandle {
 }
 
 impl Physics {
-    pub fn new(water_level: f32) -> Self {
+    pub fn new(water_level: f32, victory_water_level: f32) -> Self {
         Self {
             objects: Vec::new(),
             gravity: 2.0,
             friction: 0.98,
             water_level,
+            victory_water_level,
             indirection: Vec::new(),
             free_indirection_indices: Vec::new(),
         }
@@ -117,6 +122,10 @@ impl Physics {
 
     pub fn run(&mut self) {
         for object in &mut self.objects {
+            if object.mass == INFINITY {
+                continue;
+            }
+
             let temp = object.position;
             object.position =
                 object.position + (object.position - object.last_position) * object.friction;
@@ -128,9 +137,18 @@ impl Physics {
                     // Apply a little buoyancy
                     object.position.y -= 0.07 * object.gravity_multiplier;
                 } else {
+                    // Apply gravity
                     object.position.y += self.gravity * object.gravity_multiplier;
                 }
-            } else {
+            } else
+            // For the other side apply the opposite effects
+            if object.position.y > self.victory_water_level {
+                if (object.position.y - self.victory_water_level).abs() < 1.0 {
+                    // Apply more buoyancy
+                    object.position.y += 0.2 * object.gravity_multiplier;
+                } else {
+                    object.position.y -= 0.07 * object.gravity_multiplier;
+                }
             }
         }
 

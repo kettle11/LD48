@@ -18,9 +18,19 @@ pub(crate) fn get_level() -> Level {
                 thing_type: ThingType::Rock,
             },
             LevelItem {
+                position: Vec2::new(31.034367, 538.51715),
+                half_size: Vec2::new(0.0, 0.0),
+                thing_type: ThingType::Checkpoint,
+            },
+            LevelItem {
                 position: Vec2::new(-251.72415, 4803.548),
                 half_size: Vec2::new(44.827553, 262.06885),
                 thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(106.06069, 4711.182),
+                half_size: Vec2::new(0.0, 0.0),
+                thing_type: ThingType::Checkpoint,
             },
             LevelItem {
                 position: Vec2::new(-158.62068, 4975.962),
@@ -103,6 +113,11 @@ pub(crate) fn get_level() -> Level {
                 thing_type: ThingType::Rock,
             },
             LevelItem {
+                position: Vec2::new(42.105522, 6468.3545),
+                half_size: Vec2::new(0.0, 0.0),
+                thing_type: ThingType::Checkpoint,
+            },
+            LevelItem {
                 position: Vec2::new(-198.93625, 6833.8506),
                 half_size: Vec2::new(13.829826, 225.53198),
                 thing_type: ThingType::Rock,
@@ -130,11 +145,6 @@ pub(crate) fn get_level() -> Level {
             LevelItem {
                 position: Vec2::new(136.17027, 6922.149),
                 half_size: Vec2::new(46.808514, 81.91504),
-                thing_type: ThingType::Rock,
-            },
-            LevelItem {
-                position: Vec2::new(294.68097, 6992.3613),
-                half_size: Vec2::new(3.1915283, 90.42554),
                 thing_type: ThingType::Rock,
             },
             LevelItem {
@@ -241,6 +251,11 @@ pub(crate) fn get_level() -> Level {
                 position: Vec2::new(-5211.923, 9561.162),
                 half_size: Vec2::new(4908.077, 702.6929),
                 thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(5.6737924, 9058.287),
+                half_size: Vec2::new(0.0, 0.0),
+                thing_type: ThingType::Checkpoint,
             },
             LevelItem {
                 position: Vec2::new(568.81726, 9591.416),
