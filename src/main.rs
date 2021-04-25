@@ -5,8 +5,17 @@ use macroquad::prelude::{clear_background, next_frame};
 use std::cmp::Ordering;
 use std::fmt::Debug;
 
+mod physics;
+use physics::*;
 mod levels;
 
+#[derive(Clone, Debug, PartialEq)]
+enum ThingType {
+    Player,
+    Rock,
+    Missile,
+    Enemy,
+}
 #[derive(Clone, Debug)]
 struct Thing {
     rect: Rect,
@@ -18,6 +27,7 @@ struct Thing {
     destructable: bool,
     /// Set to infinity for kinematic objects
     mass: f32,
+    thing_type: ThingType,
 }
 
 pub(crate) const KINEMATIC_LEVEL_PIECE: Thing = Thing {
@@ -29,10 +39,27 @@ pub(crate) const KINEMATIC_LEVEL_PIECE: Thing = Thing {
     },
     velocity: Vec2::ZERO,
     acceleration: Vec2::ZERO,
-    color: BLUE,
+    color: BLACK,
     friction: 1.0,
-    destructable: true,
+    destructable: false,
     mass: f32::INFINITY,
+    thing_type: ThingType::Rock,
+};
+
+pub(crate) const ENEMY: Thing = Thing {
+    rect: Rect {
+        x: 0.,
+        y: 0.,
+        w: 100.,
+        h: 100.,
+    },
+    velocity: Vec2::ZERO,
+    acceleration: Vec2::ZERO,
+    color: GREEN,
+    friction: 0.90,
+    destructable: true,
+    mass: 1.4,
+    thing_type: ThingType::Enemy,
 };
 
 trait QuickFormat: Debug {
@@ -43,18 +70,15 @@ impl QuickFormat for Thing {
     fn append(&self, s: &mut String) {
         write!(s, "Thing {{rect:").unwrap();
         self.rect.append(s);
-        //   write!(s, ",velocity:").unwrap();
-        // self.velocity.append(s);
-        // write!(s, ",acceleration:").unwrap();
-        //  self.acceleration.append(s);
-        //  write!(s, ",color:").unwrap();
-        // self.color.append(s);
-        //  write!(s, ",friction:").unwrap();
-        // self.friction.append(s);
-        //  write!(s, ",destructable:").unwrap();
-        //self.destructable.append(s);
-        //  write!(s, ",movable:").unwrap();
-        write!(s, ",..KINEMATIC_LEVEL_PIECE").unwrap();
+        match self.thing_type {
+            ThingType::Rock => {
+                write!(s, ",..KINEMATIC_LEVEL_PIECE").unwrap();
+            }
+            ThingType::Enemy => {
+                write!(s, ",..ENEMY").unwrap();
+            }
+            _ => unreachable!(),
+        }
         write!(s, "}}").unwrap();
     }
 }
@@ -123,10 +147,6 @@ async fn main() {
     let mut camera_focal_y = screen_height() / 2.0;
     let main_area_width = 570.;
 
-    // let mut entities = Entities::new();
-
-    // let mut missiles: Vec<EntityHandle> = Vec::new();
-
     let mut world = World::new();
 
     let mut level = levels::get_level();
@@ -140,13 +160,14 @@ async fn main() {
         world.spawn((
             Player {},
             Thing {
-                rect: Rect::new(0., water_level + 3000., 30., 15.),
+                rect: Rect::new(0., water_level, 30., 15.),
                 velocity: Vec2::new(0.02, 0.02),
                 acceleration: Vec2::ZERO,
                 color: RED,
                 friction: 0.985,
                 destructable: false,
                 mass: 1.0,
+                thing_type: ThingType::Player,
             },
         ))
     };
@@ -158,10 +179,9 @@ async fn main() {
     let mut editor_mode = 1;
 
     let mut camera_zoom = 1.0;
-
     let mut editor_start_drag: Option<Rect> = None;
-
     let mut collision_responses: Vec<(Entity, Vec2)> = Vec::new();
+    let mut acceleration_to_apply: Vec<(Entity, Vec2)> = Vec::new();
 
     loop {
         let left_wall = -main_area_width / 2.;
@@ -186,12 +206,20 @@ async fn main() {
 
         if !in_level_editor {
             // ================= UPDATE =========================
+            let player_center = {
+                let mut query = world
+                    .query_one::<(&Player, &mut Thing)>(player_entity)
+                    .unwrap();
+                let (_player, player_thing) = query.get().unwrap();
+                player_thing.rect.point() + player_thing.rect.size() / 2.
+            };
 
-            // Update missiles
+            info!("PLAYER CENTER: {:?}", player_center);
+
+            // Physics and update logic for most things.
             {
                 let mut things0 = world.query::<(Option<&Missile>, &Thing)>();
 
-                // Check if missiles are hitting anything
                 for (thing0_entity, (missile0, thing0)) in things0.iter() {
                     if missile0.is_some() {
                         if thing0.rect.left() < left_wall {
@@ -204,6 +232,18 @@ async fn main() {
                             continue;
                         }
                     }
+
+                    // Pursue the player
+                    if thing0.thing_type == ThingType::Enemy {
+                        let enemy_center = thing0.rect.point() + thing0.rect.size() / 2.;
+                        let diff = player_center - enemy_center;
+
+                        // Chase range.
+                        if diff.length() < 1000. {
+                            acceleration_to_apply.push((thing0_entity, diff.normalize() * 0.1));
+                        }
+                    }
+
                     let mut things1 = world.query::<(Option<&Missile>, &Thing)>();
 
                     for (thing1_entity, (missile1, thing1)) in things1.iter() {
@@ -301,6 +341,14 @@ async fn main() {
                 }
             }
 
+            for (entity, acceleration) in acceleration_to_apply.drain(..) {
+                if let Ok(mut thing) = world.get_mut::<Thing>(entity) {
+                    if thing.mass != f32::INFINITY {
+                        thing.velocity += acceleration;
+                    }
+                }
+            }
+
             // Move entities
             for (_, (thing,)) in world.query_mut::<(&mut Thing,)>() {
                 thing.velocity += thing.acceleration;
@@ -391,6 +439,7 @@ async fn main() {
                         friction: 1.0,
                         destructable: false,
                         mass: 2.0,
+                        thing_type: ThingType::Missile,
                     });
                 }
             }
@@ -417,12 +466,12 @@ async fn main() {
             }
 
             if is_key_pressed(KeyCode::Key2) {
-                info!("BOX DRAW MODE");
+                info!("ROCK DRAW MODE");
                 editor_mode = 2;
             }
 
             if is_key_pressed(KeyCode::Key3) {
-                info!("PHYSICS BOX DRAW MODE");
+                info!("ENEMY DRAW MODE");
                 editor_mode = 3;
             }
             let camera_position = camera.screen_to_world(mouse_position().into());
@@ -453,14 +502,23 @@ async fn main() {
                                 rect.y = rect.bottom();
                                 rect.h *= -1.
                             }
-                            let thing = Thing {
-                                rect: *rect,
-                                velocity: Vec2::ZERO,
-                                acceleration: Vec2::ZERO,
-                                color: BLUE,
-                                friction: 1.0,
-                                destructable: true,
-                                mass: if editor_mode == 3 { 1.0 } else { f32::INFINITY },
+                            let thing = match editor_mode {
+                                2 => Thing {
+                                    rect: *rect,
+                                    ..KINEMATIC_LEVEL_PIECE
+                                },
+                                3 => {
+                                    if rect.w < rect.h {
+                                        rect.h = rect.w;
+                                    } else {
+                                        rect.w = rect.h;
+                                    }
+                                    Thing {
+                                        rect: *rect,
+                                        ..ENEMY
+                                    }
+                                }
+                                _ => unreachable!(),
                             };
                             level.things.push(thing.clone());
                             info!("LEVEL THINGS: {:?}", level.things.len());
@@ -508,7 +566,7 @@ async fn main() {
             -main_area_width / 2.,
             0.,
             main_area_width,
-            8000.,
+            400000.,
             Color::new(27. / 255., 66. / 255., 81. / 255., 1.),
         );
 
@@ -540,13 +598,25 @@ async fn main() {
 
         // Draw entities
         for (_entity, (thing,)) in &mut world.query::<(&Thing,)>() {
-            draw_rectangle(
-                thing.rect.x,
-                thing.rect.y,
-                thing.rect.w,
-                thing.rect.h,
-                thing.color,
-            );
+            match thing.thing_type {
+                /*  ThingType::Enemy => {
+                    draw_circle(
+                        thing.rect.x + thing.rect.w / 2.,
+                        thing.rect.y + thing.rect.h / 2.,
+                        thing.rect.w / 2.,
+                        thing.color,
+                    );
+                }*/
+                _ => {
+                    draw_rectangle(
+                        thing.rect.x,
+                        thing.rect.y,
+                        thing.rect.w,
+                        thing.rect.h,
+                        thing.color,
+                    );
+                }
+            }
         }
 
         if let Some(rect) = editor_start_drag {
