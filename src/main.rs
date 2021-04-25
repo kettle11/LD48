@@ -78,6 +78,12 @@ impl LevelItem {
                     1.0,
                     0.9,
                 ));
+
+                // Scale enemy health to their size.
+                let health = (((self.half_size.x * self.half_size.x) / 800.) as u32).max(0);
+
+                info!("ENEMY HEALTH: {:?}", health);
+
                 world.spawn((
                     Thing {
                         color: GREEN,
@@ -87,7 +93,7 @@ impl LevelItem {
                     },
                     Drawable::Enemy,
                     Enemy {
-                        dead: false,
+                        health,
                         acceleration_direction: -Vec2::X,
                     },
                 ));
@@ -164,7 +170,7 @@ struct Player {
     direction_x: f32,
 }
 struct Enemy {
-    dead: bool,
+    health: u32,
     acceleration_direction: Vec2,
 }
 
@@ -188,6 +194,7 @@ struct ExplosionPiece {
 struct Explosion {
     center: Vec2,
     pieces: Vec<ExplosionPiece>,
+    damaged: bool,
 }
 
 const EXPLOSION_RADIUS: f32 = 70.0;
@@ -214,7 +221,11 @@ impl Explosion {
     pub fn new(center: Vec2) -> Self {
         let number_of_pieces = rand::gen_range(4, 8);
         let pieces = Vec::with_capacity(number_of_pieces);
-        let mut s = Self { center, pieces };
+        let mut s = Self {
+            center,
+            pieces,
+            damaged: false,
+        };
         for _ in 0..number_of_pieces {
             s.spawn_piece();
         }
@@ -362,7 +373,7 @@ async fn main() {
             for (_entity, (thing, enemy)) in &mut world.query::<(&Thing, &mut Enemy)>() {
                 let p = physics.get_mut(thing.physics_handle).unwrap();
 
-                if !enemy.dead {
+                if enemy.health > 0 {
                     let diff = player_center - p.position;
                     enemy.acceleration_direction = diff;
                     let distance = diff.length();
@@ -452,11 +463,13 @@ async fn main() {
 
                 // Fire missile
                 if is_key_pressed(KeyCode::Space) {
-                    let position = (player_physics.position
-                        + Vec2::new(player_half_width, player_half_height))
-                        + Vec2::new(-missile_size.x / 2., missile_size.y / 2.);
+                    let position = player_physics.position
+                        + Vec2::new(
+                            player.direction_x * (missile_size.x / 2. + 2.0 + player_half_width),
+                            0.,
+                        );
 
-                    let acceleration_direction = Vec2::new(player.direction_x, 0.4) * 0.1;
+                    let acceleration_direction = Vec2::new(player.direction_x, 0.0) * 0.1;
                     player_physics.apply_force(-acceleration_direction * 10.);
 
                     let mut physics_object = PhysicsObject::new(
@@ -718,20 +731,51 @@ async fn main() {
         */
 
         // Draw entities
-        for (_entity, (thing, drawable, enemy)) in
-            &mut world.query::<(&Thing, &Drawable, Option<&Enemy>)>()
+        for (_entity, (thing, drawable, enemy, player)) in
+            &mut world.query::<(&Thing, &Drawable, Option<&Enemy>, Option<&Player>)>()
         {
             let physics_object = physics.get(thing.physics_handle);
 
             if let Some(physics_object) = physics_object {
                 match drawable {
+                    Drawable::Player => match physics_object.collider {
+                        Collider::Rectangle {
+                            half_width,
+                            half_height,
+                        } => {
+                            draw_rectangle(
+                                physics_object.position.x - half_width,
+                                physics_object.position.y - half_height,
+                                half_width * 2.,
+                                half_height * 2.,
+                                thing.color,
+                            );
+
+                            if player.unwrap().direction_x > 0. {
+                                draw_circle(
+                                    physics_object.position.x + half_width,
+                                    physics_object.position.y,
+                                    half_height,
+                                    thing.color,
+                                );
+                            } else {
+                                draw_circle(
+                                    physics_object.position.x - half_width,
+                                    physics_object.position.y,
+                                    half_height,
+                                    thing.color,
+                                );
+                            }
+                        }
+                        _ => unreachable!(),
+                    },
                     Drawable::Enemy => match physics_object.collider {
                         Collider::Circle { radius } => {
                             let enemy = enemy.unwrap();
                             let direction = enemy.acceleration_direction.normalize();
                             let rotation = direction.angle_between(-Vec2::X);
 
-                            let texture = if enemy.dead {
+                            let texture = if enemy.health <= 0 {
                                 dead_tooth_fish_texture
                             } else {
                                 tooth_fish_texture
@@ -786,27 +830,33 @@ async fn main() {
             }
 
             // Check if an enemy is within an explosion
-            for (_entity, (thing, enemy)) in &mut world.query::<(&Thing, &mut Enemy)>() {
-                let p = physics.get_mut(thing.physics_handle).unwrap();
-                let diff = p.position - explosion.center;
 
-                let radius = match p.collider {
-                    Collider::Circle { radius } => radius,
-                    _ => unreachable!(),
-                };
+            if !explosion.damaged {
+                explosion.damaged = true;
+                for (_entity, (thing, enemy)) in &mut world.query::<(&Thing, &mut Enemy)>() {
+                    let p = physics.get_mut(thing.physics_handle).unwrap();
+                    let diff = p.position - explosion.center;
 
-                let distance = EXPLOSION_RADIUS + radius;
-                let distance_squared = distance * distance;
+                    let radius = match p.collider {
+                        Collider::Circle { radius } => radius,
+                        _ => unreachable!(),
+                    };
 
-                const THRESHOLD: f32 = 500.;
-                const THRESHOLD_SQUARED: f32 = THRESHOLD * THRESHOLD;
+                    let distance = EXPLOSION_RADIUS + radius;
+                    let distance_squared = distance * distance;
 
-                if distance_squared < THRESHOLD_SQUARED {
-                    p.apply_force((distance_squared / THRESHOLD_SQUARED) * diff.normalize() * 2.);
-                    if diff.length_squared() < distance_squared {
-                        // Kill it!
-                        p.mass = 0.5;
-                        enemy.dead = true;
+                    const THRESHOLD: f32 = 500.;
+                    const THRESHOLD_SQUARED: f32 = THRESHOLD * THRESHOLD;
+
+                    if distance_squared < THRESHOLD_SQUARED {
+                        p.apply_force(
+                            (distance_squared / THRESHOLD_SQUARED) * diff.normalize() * 100.,
+                        );
+                        if diff.length_squared() < distance_squared {
+                            // Kill it!
+                            p.mass = 0.5;
+                            enemy.health = enemy.health.saturating_sub(1);
+                        }
                     }
                 }
             }
