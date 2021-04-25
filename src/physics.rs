@@ -91,6 +91,36 @@ impl Physics {
                     }
                 }
 
+                fn rectangle_rectangle(
+                    p0: &mut Vec2,
+                    p1: &mut Vec2,
+                    h0: Vec2,
+                    h1: Vec2,
+                    mass_ratio: f32,
+                ) {
+                    let diff = *p1 - *p0;
+                    let half_sum = h0 + h1;
+
+                    let penetration = half_sum - Vec2::new(diff.x.abs(), diff.y.abs());
+
+                    if penetration.x > 0. && penetration.y > 0. {
+                        let offset_horizontal = Vec2::new(-penetration.x * diff.x.signum(), 0.);
+                        let offset_vertical = Vec2::new(0., -penetration.y * diff.y.signum());
+
+                        let diff = penetration.x - penetration.y;
+
+                        let offset = if diff < 0. {
+                            // Push apart along y
+                            offset_horizontal
+                        } else {
+                            offset_vertical
+                        };
+
+                        *p0 += offset * mass_ratio;
+                        *p1 -= offset * (1.0 - mass_ratio);
+                    }
+                }
+
                 fn circle_rectangle(
                     circle_position: &mut Vec2,
                     rect_position: &mut Vec2,
@@ -167,24 +197,36 @@ impl Physics {
                     Collider::Rectangle {
                         half_width,
                         half_height,
-                    } => match object1.collider {
-                        Collider::Circle { radius } => {
-                            let mut mass_ratio = object0.mass / mass_total;
-                            if object0.mass == f32::INFINITY {
-                                mass_ratio = 1.0;
-                            }
+                    } => {
+                        let h0 = Vec2::new(half_width, half_height);
+                        match object1.collider {
+                            Collider::Circle { radius } => {
+                                let mut mass_ratio = object0.mass / mass_total;
+                                if object0.mass == f32::INFINITY {
+                                    mass_ratio = 1.0;
+                                }
 
-                            circle_rectangle(
-                                &mut object1.position,
-                                &mut object0.position,
-                                radius,
+                                circle_rectangle(
+                                    &mut object1.position,
+                                    &mut object0.position,
+                                    radius,
+                                    half_width,
+                                    half_height,
+                                    mass_ratio,
+                                )
+                            }
+                            Collider::Rectangle {
                                 half_width,
                                 half_height,
+                            } => rectangle_rectangle(
+                                &mut object0.position,
+                                &mut object1.position,
+                                h0,
+                                Vec2::new(half_width, half_height),
                                 mass_ratio,
-                            )
+                            ),
                         }
-                        _ => unimplemented!(),
-                    },
+                    }
                 }
             }
         }

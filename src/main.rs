@@ -20,39 +20,71 @@ enum ThingType {
 struct Thing {
     color: Color,
     /// If this is 1.0 that means there's no friction
-    friction: f32,
     destructable: bool,
-    /// Set to infinity for kinematic objects
-    mass: f32,
-    thing_type: ThingType,
     physics_handle: PhysicsHandle,
 }
 
 pub(crate) const KINEMATIC_LEVEL_PIECE: Thing = Thing {
     color: BLACK,
-    friction: 1.0,
     destructable: false,
-    mass: f32::INFINITY,
-    thing_type: ThingType::Rock,
+
     physics_handle: PhysicsHandle::empty(),
 };
 
 pub(crate) const ENEMY: Thing = Thing {
     color: GREEN,
-    friction: 0.90,
     destructable: true,
-    mass: 1.4,
-    thing_type: ThingType::Enemy,
     physics_handle: PhysicsHandle::empty(),
 };
+
+#[derive(Debug)]
+struct LevelItem {
+    position: Vec2,
+    thing_type: ThingType,
+    half_size: Vec2,
+}
+
+enum Drawable {
+    Rock,
+    Player,
+}
+
+impl LevelItem {
+    pub fn spawn(&self, physics: &mut Physics, world: &mut World) {
+        match self.thing_type {
+            // Need to spawn things here
+            ThingType::Rock => {
+                let physics_handle = physics.push(PhysicsObject {
+                    mass: f32::INFINITY,
+                    position: self.position,
+                    last_position: self.position,
+                    collider: Collider::Rectangle {
+                        half_width: self.half_size.x,
+                        half_height: self.half_size.y,
+                    },
+                    gravity_multiplier: 0.0,
+                });
+                world.spawn((
+                    Thing {
+                        color: BLUE,
+                        destructable: false,
+                        physics_handle,
+                    },
+                    Drawable::Rock,
+                ));
+            }
+            _ => unimplemented!(),
+        }
+    }
+}
 
 trait QuickFormat: Debug {
     fn append(&self, s: &mut String);
 }
 
-impl QuickFormat for Thing {
+impl QuickFormat for LevelItem {
     fn append(&self, s: &mut String) {
-        write!(s, "Thing {{rect:").unwrap();
+        write!(s, "LevelItem {{rect:").unwrap();
         // self.rect.append(s);
         match self.thing_type {
             ThingType::Rock => {
@@ -113,7 +145,7 @@ struct Missile {}
 
 #[derive(Debug)]
 struct Level {
-    things: Vec<Thing>,
+    things: Vec<LevelItem>,
 }
 
 #[macroquad::main("Sub")]
@@ -137,29 +169,29 @@ async fn main() {
 
     let setup = |level: &Level, world: &mut World, physics: &mut Physics| -> Entity {
         for thing in &level.things {
-            let thing = thing.clone();
-            world.spawn((thing,));
+            thing.spawn(physics, world);
         }
+
+        // Spawn player
 
         let physics_handle = physics.push(PhysicsObject::new(
             1.0,
-            Vec2::new(0., water_level),
+            Vec2::new(0., water_level + 200.),
             Collider::Rectangle {
                 half_width: 15.,
                 half_height: 7.5,
             },
             1.0,
         ));
+
         world.spawn((
             Player {},
             Thing {
                 color: RED,
-                friction: 0.985,
                 destructable: false,
-                mass: 1.0,
-                thing_type: ThingType::Player,
                 physics_handle: physics_handle,
             },
+            Drawable::Player,
         ))
     };
     let mut physics = Physics::new();
@@ -373,6 +405,7 @@ async fn main() {
                         let (_, player_thing) = query.get().unwrap();
                         let p = physics.get_mut(player_thing.physics_handle);
                         p.position = camera_position;
+                        p.last_position = camera_position;
                         camera_focal_y = camera_position.y;
                     }
                 }
@@ -381,7 +414,6 @@ async fn main() {
                         rect.w = camera_position.x - rect.x;
                         rect.h = camera_position.y - rect.y;
 
-                        /*
                         if is_mouse_button_released(MouseButton::Left) {
                             if rect.w < 0. {
                                 rect.x = rect.right();
@@ -391,30 +423,18 @@ async fn main() {
                                 rect.y = rect.bottom();
                                 rect.h *= -1.
                             }
-                            let thing = match editor_mode {
-                                2 => Thing {
-                                    rect: *rect,
-                                    ..KINEMATIC_LEVEL_PIECE
+                            let level_item = match editor_mode {
+                                2 => LevelItem {
+                                    position: rect.point() + rect.size() / 2.,
+                                    half_size: rect.size() / 2.,
+                                    thing_type: ThingType::Rock,
                                 },
-                                3 => {
-                                    if rect.w < rect.h {
-                                        rect.h = rect.w;
-                                    } else {
-                                        rect.w = rect.h;
-                                    }
-                                    Thing {
-                                        rect: *rect,
-                                        ..ENEMY
-                                    }
-                                }
-                                _ => unreachable!(),
+                                _ => unimplemented!(),
                             };
-                            level.things.push(thing.clone());
-                            info!("LEVEL THINGS: {:?}", level.things.len());
-                            world.spawn((thing,));
+                            level_item.spawn(&mut physics, &mut world);
+                            level.things.push(level_item);
                             editor_start_drag = None;
                         }
-                        */
                     } else {
                         if is_mouse_button_down(MouseButton::Left) {
                             editor_start_drag = Some(Rect {
@@ -499,9 +519,9 @@ async fn main() {
         */
 
         // Draw entities
-        for (_entity, (thing,)) in &mut world.query::<(&Thing,)>() {
+        for (_entity, (thing, drawable)) in &mut world.query::<(&Thing, &Drawable)>() {
             let physics_object = physics.get(thing.physics_handle);
-            match thing.thing_type {
+            match drawable {
                 /*  ThingType::Enemy => {
                     draw_circle(
                         thing.rect.x + thing.rect.w / 2.,
