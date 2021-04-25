@@ -80,7 +80,7 @@ impl LevelItem {
                 ));
 
                 // Scale enemy health to their size.
-                let health = (((self.half_size.x * self.half_size.x) / 800.) as u32).max(0);
+                let health = (((self.half_size.x * self.half_size.x) / 800.) as u32).max(1);
 
                 info!("ENEMY HEALTH: {:?}", health);
 
