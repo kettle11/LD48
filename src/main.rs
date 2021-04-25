@@ -1,7 +1,10 @@
 use core::fmt::Write;
 use hecs::*;
-use macroquad::prelude::*;
-use macroquad::prelude::{clear_background, next_frame};
+use macroquad::{prelude::*, rand::rand};
+use macroquad::{
+    prelude::{clear_background, next_frame},
+    rand::gen_range,
+};
 use std::cmp::Ordering;
 use std::fmt::Debug;
 
@@ -45,17 +48,16 @@ impl LevelItem {
         match self.thing_type {
             // Need to spawn things here
             ThingType::Rock => {
-                let physics_handle = physics.push(PhysicsObject {
-                    mass: f32::INFINITY,
-                    position: self.position,
-                    last_position: self.position,
-                    collider: Collider::Rectangle {
+                let physics_handle = physics.push(PhysicsObject::new(
+                    f32::INFINITY,
+                    self.position,
+                    Collider::Rectangle {
                         half_width: self.half_size.x,
                         half_height: self.half_size.y,
                     },
-                    gravity_multiplier: 0.0,
-                    friction: 0.0,
-                });
+                    0.0,
+                    0.0,
+                ));
                 world.spawn((
                     Thing {
                         color: BLACK,
@@ -67,16 +69,15 @@ impl LevelItem {
                 ));
             }
             ThingType::Enemy => {
-                let physics_handle = physics.push(PhysicsObject {
-                    mass: 2.0,
-                    position: self.position,
-                    last_position: self.position,
-                    collider: Collider::Circle {
+                let physics_handle = physics.push(PhysicsObject::new(
+                    2.0,
+                    self.position,
+                    Collider::Circle {
                         radius: self.half_size.x,
                     },
-                    gravity_multiplier: 1.0,
-                    friction: 0.9,
-                });
+                    1.0,
+                    0.9,
+                ));
                 world.spawn((
                     Thing {
                         color: GREEN,
@@ -177,6 +178,69 @@ struct Level {
     things: Vec<LevelItem>,
 }
 
+struct ExplosionPiece {
+    position: Vec2,
+    radius: f32,
+    color: Color,
+}
+struct Explosion {
+    center: Vec2,
+    pieces: Vec<ExplosionPiece>,
+}
+
+impl Explosion {
+    pub fn spawn_piece(&mut self) {
+        let max_radius = 20.;
+
+        let rand_x = gen_range(-max_radius, max_radius);
+        let rand_y = gen_range(-max_radius, max_radius);
+
+        let color = match gen_range(0, 3) {
+            0 => Color::new(212. / 255., 39. / 255., 15. / 255., 1.0),
+            1 => Color::new(239. / 255., 249. / 255., 126. / 255., 1.0),
+            2 => Color::new(204. / 255., 137. / 255., 75. / 255., 1.0),
+            _ => unreachable!(),
+        };
+
+        self.pieces.push(ExplosionPiece {
+            position: self.center + Vec2::new(rand_x, rand_y),
+            radius: gen_range(20., 50.),
+            color,
+        })
+    }
+    pub fn new(center: Vec2) -> Self {
+        let number_of_pieces = rand::gen_range(4, 8);
+        let pieces = Vec::with_capacity(number_of_pieces);
+        let mut s = Self { center, pieces };
+        for _ in 0..number_of_pieces {
+            s.spawn_piece();
+        }
+        s
+    }
+
+    pub fn draw(&mut self) {
+        if gen_range(0, 100) < 35 {
+            self.spawn_piece()
+        }
+
+        if gen_range(0, 100) < 50 {
+            if self.pieces.len() > 0 {
+                self.pieces.swap_remove(0);
+            }
+        }
+
+        for piece in &self.pieces {
+            draw_poly(
+                piece.position.x,
+                piece.position.y,
+                7,
+                piece.radius,
+                0.,
+                piece.color,
+            )
+        }
+    }
+}
 #[macroquad::main("Sub")]
 async fn main() {
     let tooth_fish_texture = load_texture("assets/ToothFish.png").await.unwrap();
@@ -236,7 +300,7 @@ async fn main() {
 
     let mut player_entity = setup(&level, &mut world, &mut physics);
     let missile_size = Vec2::new(10., 5.);
-    //let mut entities_to_despawn = Vec::new();
+    let mut entities_to_despawn = Vec::new();
 
     let mut in_level_editor = false;
     let mut editor_mode = 1;
@@ -245,6 +309,13 @@ async fn main() {
     let mut editor_start_drag: Option<Rect> = None;
     let mut collision_responses: Vec<(Entity, Vec2)> = Vec::new();
     let mut acceleration_to_apply: Vec<(Entity, Vec2)> = Vec::new();
+
+    let mut explosions_to_spawn = Vec::new();
+    // TEMPORARY
+    world.spawn((Explosion::new(Vec2::new(
+        0.,
+        water_level + player_spawn_offset,
+    )),));
 
     loop {
         //  let left_wall = -main_area_width / 2.;
@@ -258,7 +329,7 @@ async fn main() {
                 .query_one::<(&Player, &mut Thing)>(player_entity)
                 .unwrap();
             let (_player, player_thing) = query.get().unwrap();
-            let p = physics.get(player_thing.physics_handle);
+            let p = physics.get(player_thing.physics_handle).unwrap();
             p.position
         };
 
@@ -282,7 +353,7 @@ async fn main() {
 
             // Make enemies follow player
             for (_entity, (thing, enemy)) in &mut world.query::<(&Thing, &mut Enemy)>() {
-                let p = physics.get_mut(thing.physics_handle);
+                let p = physics.get_mut(thing.physics_handle).unwrap();
                 let diff = player_center - p.position;
                 enemy.acceleration_direction = diff;
                 let distance = diff.length();
@@ -293,8 +364,9 @@ async fn main() {
 
             // Accelerate things
             for (_entity, (thing, accelerator)) in &mut world.query::<(&Thing, &Accelerator)>() {
-                let p = physics.get_mut(thing.physics_handle);
-                p.apply_force(accelerator.amount)
+                if let Some(p) = physics.get_mut(thing.physics_handle) {
+                    p.apply_force(accelerator.amount)
+                }
             }
 
             let mut missile_to_spawn = None;
@@ -304,7 +376,7 @@ async fn main() {
                     .unwrap();
                 let (player, player_thing) = query.get().unwrap();
 
-                let player_physics = physics.get_mut(player_thing.physics_handle);
+                let player_physics = physics.get_mut(player_thing.physics_handle).unwrap();
                 // Player controls
                 let player_acceleration = 0.1;
 
@@ -416,6 +488,23 @@ async fn main() {
             });
 
             physics.run();
+
+            // Check for missile impacts
+            for (entity, (thing, _missile)) in &mut world.query::<(&Thing, &Missile)>() {
+                if let Some(p) = physics.get(thing.physics_handle) {
+                    if p.last_collision_impact.length() > 2.0 {
+                        // info!("MISSILE IMPACT: {:?}", p.last_collision_impact.length());
+                        entities_to_despawn.push(entity);
+                        explosions_to_spawn.push(Explosion::new(p.position));
+
+                        physics.remove(thing.physics_handle)
+                    }
+                }
+            }
+
+            for explosion in explosions_to_spawn.drain(..) {
+                world.spawn((explosion,));
+            }
         } else {
             // ===================== LEVEL EDITOR =========================
 
@@ -454,7 +543,7 @@ async fn main() {
                     if is_mouse_button_pressed(MouseButton::Left) {
                         let mut to_despawn = None;
                         for (entity, (thing,)) in world.query::<(&Thing,)>().iter() {
-                            let p = physics.get(thing.physics_handle);
+                            let p = physics.get(thing.physics_handle).unwrap();
                             match p.collider {
                                 Collider::Circle { radius } => {
                                     let distance = p.position - mouse_position_in_world;
@@ -486,8 +575,10 @@ async fn main() {
                                     .query_one::<(&mut Player, &mut Thing)>(player_entity)
                                     .unwrap();
                                 let (_player, player_thing) = query.get().unwrap();
-                                physics.get_mut(player_thing.physics_handle).position =
-                                    player_center;
+                                physics
+                                    .get_mut(player_thing.physics_handle)
+                                    .unwrap()
+                                    .position = player_center;
                             }
                         }
                     }
@@ -498,7 +589,7 @@ async fn main() {
                             .query_one::<(&Player, &mut Thing)>(player_entity)
                             .unwrap();
                         let (_, player_thing) = query.get().unwrap();
-                        let p = physics.get_mut(player_thing.physics_handle);
+                        let p = physics.get_mut(player_thing.physics_handle).unwrap();
                         p.position = mouse_position_in_world;
                         p.last_position = mouse_position_in_world;
                         camera_focal_y = mouse_position_in_world.y;
@@ -617,49 +708,59 @@ async fn main() {
         {
             let physics_object = physics.get(thing.physics_handle);
 
-            match drawable {
-                Drawable::Enemy => match physics_object.collider {
-                    Collider::Circle { radius } => {
-                        let direction = enemy.unwrap().acceleration_direction.normalize();
-                        let rotation = direction.angle_between(-Vec2::X);
+            if let Some(physics_object) = physics_object {
+                match drawable {
+                    Drawable::Enemy => match physics_object.collider {
+                        Collider::Circle { radius } => {
+                            let direction = enemy.unwrap().acceleration_direction.normalize();
+                            let rotation = direction.angle_between(-Vec2::X);
 
-                        draw_texture_ex(
-                            tooth_fish_texture,
-                            physics_object.position.x - radius,
-                            physics_object.position.y - radius,
-                            WHITE,
-                            DrawTextureParams {
-                                dest_size: Some(Vec2::new(radius * 2., radius * 2.)),
-                                rotation: -rotation,
-                                ..Default::default()
-                            },
-                        );
-                        /*
-                        draw_circle(
-                            physics_object.position.x,
-                            physics_object.position.y,
-                            radius,
-                            thing.color,
-                        );
-                        */
-                    }
-                    _ => unimplemented!(),
-                },
-                _ => match physics_object.collider {
-                    Collider::Rectangle {
-                        half_width,
-                        half_height,
-                    } => {
-                        draw_rectangle(
-                            physics_object.position.x - half_width,
-                            physics_object.position.y - half_height,
-                            half_width * 2.,
-                            half_height * 2.,
-                            thing.color,
-                        );
-                    }
-                    _ => unimplemented!(),
-                },
+                            draw_texture_ex(
+                                tooth_fish_texture,
+                                physics_object.position.x - radius,
+                                physics_object.position.y - radius,
+                                WHITE,
+                                DrawTextureParams {
+                                    dest_size: Some(Vec2::new(radius * 2., radius * 2.)),
+                                    rotation: -rotation,
+                                    ..Default::default()
+                                },
+                            );
+                            /*
+                            draw_circle(
+                                physics_object.position.x,
+                                physics_object.position.y,
+                                radius,
+                                thing.color,
+                            );
+                            */
+                        }
+                        _ => unimplemented!(),
+                    },
+                    _ => match physics_object.collider {
+                        Collider::Rectangle {
+                            half_width,
+                            half_height,
+                        } => {
+                            draw_rectangle(
+                                physics_object.position.x - half_width,
+                                physics_object.position.y - half_height,
+                                half_width * 2.,
+                                half_height * 2.,
+                                thing.color,
+                            );
+                        }
+                        _ => unimplemented!(),
+                    },
+                }
+            }
+        }
+
+        // Draw explosions
+        for (entity, explosion) in &mut world.query::<&mut Explosion>() {
+            explosion.draw();
+            if explosion.pieces.len() == 0 {
+                entities_to_despawn.push(entity);
             }
         }
 
@@ -693,6 +794,10 @@ async fn main() {
             },
         );
         */
+
+        for entity in entities_to_despawn.drain(..) {
+            let _ = world.despawn(entity);
+        }
 
         next_frame().await
     }

@@ -10,9 +10,11 @@ pub struct PhysicsObject {
     pub collider: Collider,
     pub gravity_multiplier: f32,
     pub friction: f32,
+    pub last_collision_impact: Vec2,
+    indirection_index: usize,
 }
 impl PhysicsObject {
-    pub fn new(
+    pub const fn new(
         mass: f32,
         position: Vec2,
         collider: Collider,
@@ -26,6 +28,8 @@ impl PhysicsObject {
             collider,
             gravity_multiplier,
             friction,
+            last_collision_impact: Vec2::ZERO,
+            indirection_index: 0,
         }
     }
 
@@ -44,6 +48,8 @@ pub struct Physics {
     pub friction: f32,
     /// Only apply gravity above water-level
     pub water_level: f32,
+    indirection: Vec<usize>,
+    free_indirection_indices: Vec<usize>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -62,28 +68,51 @@ impl Physics {
             gravity: 2.0,
             friction: 0.98,
             water_level,
+            indirection: Vec::new(),
+            free_indirection_indices: Vec::new(),
         }
     }
 
     pub fn clear(&mut self) {
         self.objects.clear();
+        self.indirection.clear();
+        self.free_indirection_indices.clear();
     }
 
-    pub fn get(&self, physics_handle: PhysicsHandle) -> &PhysicsObject {
-        &self.objects[physics_handle.0]
+    pub fn get(&self, physics_handle: PhysicsHandle) -> Option<&PhysicsObject> {
+        self.objects.get(self.indirection[physics_handle.0])
     }
 
-    pub fn get_mut(&mut self, physics_handle: PhysicsHandle) -> &mut PhysicsObject {
-        &mut self.objects[physics_handle.0]
+    pub fn get_mut(&mut self, physics_handle: PhysicsHandle) -> Option<&mut PhysicsObject> {
+        self.objects.get_mut(self.indirection[physics_handle.0])
     }
 
-    pub fn push(&mut self, physics_object: PhysicsObject) -> PhysicsHandle {
+    pub fn push(&mut self, mut physics_object: PhysicsObject) -> PhysicsHandle {
+        let new_slot = self.objects.len();
+        let indirection_index = if let Some(indirection_index) = self.free_indirection_indices.pop()
+        {
+            self.indirection[indirection_index] = new_slot;
+            indirection_index
+        } else {
+            self.indirection.push(new_slot);
+            self.indirection.len() - 1
+        };
+        physics_object.indirection_index = indirection_index;
         self.objects.push(physics_object);
-        PhysicsHandle(self.objects.len() - 1)
+
+        //  info!("INDIRECTION INDEX: {:?}", indirection_index);
+        PhysicsHandle(indirection_index)
     }
 
-    pub fn apply_force(&mut self, handle: PhysicsHandle, amount: Vec2) {
-        self.objects[handle.0].last_position -= amount;
+    pub fn remove(&mut self, physics_handle: PhysicsHandle) {
+        let slot = self.indirection[physics_handle.0];
+        //info!("ACTIVE PHYSICS OBJECTS: {:?}", self.objects.len() - 1);
+        // Update the one being swapped
+        if let Some(last) = self.objects.last() {
+            self.indirection[last.indirection_index] = slot
+        }
+        self.objects.swap_remove(slot);
+        self.free_indirection_indices.push(physics_handle.0)
     }
 
     pub fn run(&mut self) {
@@ -114,13 +143,21 @@ impl Physics {
                     r0: f32,
                     r1: f32,
                     mass_ratio: f32,
+                    c0: &mut Vec2,
+                    c1: &mut Vec2,
                 ) {
                     let diff = *p1 - *p0;
                     let radius_sum = r0 + r1;
                     if diff.length() < radius_sum {
                         let offset = diff - diff.normalize() * radius_sum;
-                        *p0 += offset * mass_ratio;
-                        *p1 -= offset * (1.0 - mass_ratio);
+
+                        // Store the collision offset for later to make missiles explode.
+                        let o0 = offset * mass_ratio;
+                        let o1 = offset * (1.0 - mass_ratio);
+                        *c0 = o0;
+                        *c1 = o1;
+                        *p0 += o0;
+                        *p1 -= o1;
                     }
                 }
 
@@ -130,6 +167,8 @@ impl Physics {
                     h0: Vec2,
                     h1: Vec2,
                     mass_ratio: f32,
+                    c0: &mut Vec2,
+                    c1: &mut Vec2,
                 ) {
                     let diff = *p1 - *p0;
                     let half_sum = h0 + h1;
@@ -149,8 +188,14 @@ impl Physics {
                             offset_vertical
                         };
 
-                        *p0 += offset * mass_ratio;
-                        *p1 -= offset * (1.0 - mass_ratio);
+                        let o0 = offset * mass_ratio;
+                        let o1 = offset * (1.0 - mass_ratio);
+
+                        *c0 = o0;
+                        *c1 = o1;
+
+                        *p0 += o0;
+                        *p1 -= o1;
                     }
                 }
 
@@ -161,6 +206,8 @@ impl Physics {
                     half_width: f32,
                     half_height: f32,
                     mass_ratio: f32,
+                    c0: &mut Vec2,
+                    c1: &mut Vec2,
                 ) {
                     let diff = *circle_position - *rect_position;
                     let circle_distance = (diff).abs();
@@ -169,11 +216,19 @@ impl Physics {
 
                     if !(circle_distance.x > halfs.x) && !(circle_distance.y > halfs.y) {
                         if circle_distance.x <= half_width {
-                            circle_position.y -= offsets.y * mass_ratio;
-                            rect_position.y += offsets.y * (1.0 - mass_ratio);
+                            let o0 = offsets.y * mass_ratio;
+                            let o1 = offsets.y * (1.0 - mass_ratio);
+                            circle_position.y -= o0;
+                            rect_position.y += o1;
+                            *c0 = Vec2::new(0., o0);
+                            *c1 = Vec2::new(0., o1);
                         } else if circle_distance.y <= half_height {
-                            circle_position.x -= offsets.x * mass_ratio;
-                            rect_position.x += offsets.x * (1.0 - mass_ratio);
+                            let o0 = offsets.x * mass_ratio;
+                            let o1 = offsets.x * (1.0 - mass_ratio);
+                            circle_position.x -= o0;
+                            rect_position.x += o1;
+                            *c0 = Vec2::new(o0, 0.);
+                            *c1 = Vec2::new(o1, 0.);
                         } else {
                             let corner_distance = (circle_distance.x - half_width).powf(2.)
                                 + (circle_distance.y - half_height).powf(2.);
@@ -182,8 +237,13 @@ impl Physics {
                                 let offset = (corner_distance.sqrt() - radius_squared.sqrt()).abs();
                                 let offsets = offset * -diff.normalize();
 
-                                *circle_position -= offsets * mass_ratio;
-                                *rect_position += offsets * (1.0 - mass_ratio);
+                                let o0 = offsets * mass_ratio;
+                                let o1 = offsets * (1.0 - mass_ratio);
+
+                                *c0 = o0;
+                                *c1 = o1;
+                                *circle_position -= o0;
+                                *rect_position += o1;
                             }
                         }
                     }
@@ -212,6 +272,8 @@ impl Physics {
                                     r0,
                                     r1,
                                     mass_ratio,
+                                    &mut object0.last_collision_impact,
+                                    &mut object1.last_collision_impact,
                                 )
                             }
                             Collider::Rectangle {
@@ -224,6 +286,8 @@ impl Physics {
                                 half_width,
                                 half_height,
                                 mass_ratio,
+                                &mut object0.last_collision_impact,
+                                &mut object1.last_collision_impact,
                             ),
                         }
                     }
@@ -246,6 +310,8 @@ impl Physics {
                                     half_width,
                                     half_height,
                                     mass_ratio,
+                                    &mut object0.last_collision_impact,
+                                    &mut object1.last_collision_impact,
                                 )
                             }
                             Collider::Rectangle {
@@ -257,6 +323,8 @@ impl Physics {
                                 h0,
                                 Vec2::new(half_width, half_height),
                                 mass_ratio,
+                                &mut object0.last_collision_impact,
+                                &mut object1.last_collision_impact,
                             ),
                         }
                     }
