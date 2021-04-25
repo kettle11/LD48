@@ -186,7 +186,7 @@ async fn main() {
 
     let max_color_lerp_depth = 3000.;
     //
-    let min_camera_zoom = 0.5;
+    let min_camera_zoom = 0.7;
     let max_camera_zoom = 2.0;
     let mut camera_focal_y = screen_height() / 2.0;
     let main_area_width = 570.;
@@ -301,10 +301,13 @@ async fn main() {
 
                 let player_physics = physics.get_mut(player_thing.physics_handle);
                 // Player controls
+                let player_acceleration = 0.1;
+
                 if player_center.y < water_level {
-                    // player_thing.velocity.y += gravity_out_of_water;
+                    if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
+                        player_physics.apply_force(Vec2::new(0., player_acceleration));
+                    }
                 } else {
-                    let player_acceleration = 0.1;
                     if is_key_down(KeyCode::Left) || is_key_down(KeyCode::A) {
                         player_physics.apply_force(Vec2::new(-player_acceleration, 0.));
                         player.direction_x = -1.0;

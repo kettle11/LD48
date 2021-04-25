@@ -91,10 +91,13 @@ impl Physics {
 
             // Only apply gravity above water level
             if object.position.y < self.water_level {
-                object.position.y += self.gravity * object.gravity_multiplier;
+                if (object.position.y - self.water_level).abs() < 1.0 {
+                    // Apply a little buoyancy
+                    object.position.y -= 0.07 * object.gravity_multiplier;
+                } else {
+                    object.position.y += self.gravity * object.gravity_multiplier;
+                }
             } else {
-                // Apply a little buoyancy
-                object.position.y -= 0.005 * object.gravity_multiplier;
             }
         }
 
