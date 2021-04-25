@@ -85,7 +85,9 @@ impl LevelItem {
                         index_in_level: Some(index_in_level),
                     },
                     Drawable::Enemy,
-                    Enemy {},
+                    Enemy {
+                        acceleration_direction: -Vec2::X,
+                    },
                 ));
             }
             _ => unimplemented!(),
@@ -159,7 +161,9 @@ impl QuickFormat for Color {
 struct Player {
     direction_x: f32,
 }
-struct Enemy {}
+struct Enemy {
+    acceleration_direction: Vec2,
+}
 
 struct Missile {}
 
@@ -175,6 +179,7 @@ struct Level {
 
 #[macroquad::main("Sub")]
 async fn main() {
+    let tooth_fish_texture = load_texture("assets/ToothFish.png").await.unwrap();
     // let font = load_ttf_font("assets/OrelegaOne-Regular.ttf").await;
 
     // let gravity_out_of_water = 0.2;
@@ -183,7 +188,7 @@ async fn main() {
 
     let max_color_lerp_depth = 3000.;
     //
-    let min_camera_zoom = 0.8;
+    let min_camera_zoom = 1.3;
     let max_camera_zoom = 2.0;
     let mut camera_focal_y = screen_height() / 2.0;
     let main_area_width = 570.;
@@ -194,7 +199,7 @@ async fn main() {
 
     let player_half_width = 15.;
     let player_half_height = 7.5;
-    let player_spawn_offset = 0.;
+    let player_spawn_offset = 300.;
     let setup = |level: &Level, world: &mut World, physics: &mut Physics| -> Entity {
         world.clear();
         physics.clear();
@@ -276,9 +281,10 @@ async fn main() {
             // info!("PLAYER CENTER: {:?}", player_center);
 
             // Make enemies follow player
-            for (_entity, (thing, _enemy)) in &mut world.query::<(&Thing, &Enemy)>() {
+            for (_entity, (thing, enemy)) in &mut world.query::<(&Thing, &mut Enemy)>() {
                 let p = physics.get_mut(thing.physics_handle);
                 let diff = player_center - p.position;
+                enemy.acceleration_direction = diff;
                 let distance = diff.length();
                 if distance < 800. {
                     p.apply_force(0.2 * diff.normalize())
@@ -606,18 +612,36 @@ async fn main() {
         */
 
         // Draw entities
-        for (_entity, (thing, drawable)) in &mut world.query::<(&Thing, &Drawable)>() {
+        for (_entity, (thing, drawable, enemy)) in
+            &mut world.query::<(&Thing, &Drawable, Option<&Enemy>)>()
+        {
             let physics_object = physics.get(thing.physics_handle);
 
             match drawable {
                 Drawable::Enemy => match physics_object.collider {
                     Collider::Circle { radius } => {
+                        let direction = enemy.unwrap().acceleration_direction.normalize();
+                        let rotation = direction.angle_between(-Vec2::X);
+
+                        draw_texture_ex(
+                            tooth_fish_texture,
+                            physics_object.position.x - radius,
+                            physics_object.position.y - radius,
+                            WHITE,
+                            DrawTextureParams {
+                                dest_size: Some(Vec2::new(radius * 2., radius * 2.)),
+                                rotation: -rotation,
+                                ..Default::default()
+                            },
+                        );
+                        /*
                         draw_circle(
                             physics_object.position.x,
                             physics_object.position.y,
                             radius,
                             thing.color,
                         );
+                        */
                     }
                     _ => unimplemented!(),
                 },
