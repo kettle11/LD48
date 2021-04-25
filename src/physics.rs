@@ -9,16 +9,32 @@ pub struct PhysicsObject {
     pub last_position: Vec2,
     pub collider: Collider,
     pub gravity_multiplier: f32,
+    pub friction: f32,
 }
 impl PhysicsObject {
-    pub fn new(mass: f32, position: Vec2, collider: Collider, gravity_multiplier: f32) -> Self {
+    pub fn new(
+        mass: f32,
+        position: Vec2,
+        collider: Collider,
+        gravity_multiplier: f32,
+        friction: f32,
+    ) -> Self {
         Self {
             mass,
             position,
             last_position: position,
             collider,
             gravity_multiplier,
+            friction,
         }
+    }
+
+    pub fn apply_force(&mut self, amount: Vec2) {
+        self.last_position -= amount;
+    }
+
+    pub fn velocity(&self) -> Vec2 {
+        self.position - self.last_position
     }
 }
 
@@ -26,6 +42,8 @@ pub struct Physics {
     pub objects: Vec<PhysicsObject>,
     pub gravity: f32,
     pub friction: f32,
+    /// Only apply gravity above water-level
+    pub water_level: f32,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -38,11 +56,12 @@ impl PhysicsHandle {
 }
 
 impl Physics {
-    pub fn new() -> Self {
+    pub fn new(water_level: f32) -> Self {
         Self {
             objects: Vec::new(),
             gravity: 2.0,
             friction: 0.98,
+            water_level,
         }
     }
 
@@ -67,9 +86,13 @@ impl Physics {
         for object in &mut self.objects {
             let temp = object.position;
             object.position =
-                object.position + (object.position - object.last_position) * self.friction;
+                object.position + (object.position - object.last_position) * object.friction;
             object.last_position = temp;
-            object.position.y += self.gravity * object.gravity_multiplier;
+
+            // Only apply gravity above water level
+            if object.position.y < self.water_level {
+                object.position.y += self.gravity * object.gravity_multiplier;
+            }
         }
 
         let len = self.objects.len();

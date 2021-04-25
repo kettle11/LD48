@@ -21,6 +21,7 @@ enum Drawable {
     Rock,
     Player,
     Enemy,
+    Missile,
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +59,7 @@ impl LevelItem {
                         half_height: self.half_size.y,
                     },
                     gravity_multiplier: 0.0,
+                    friction: 0.0,
                 });
                 world.spawn((
                     Thing {
@@ -77,6 +79,7 @@ impl LevelItem {
                         radius: self.half_size.x,
                     },
                     gravity_multiplier: 0.0,
+                    friction: 0.9,
                 });
                 world.spawn((
                     Thing {
@@ -85,6 +88,7 @@ impl LevelItem {
                         physics_handle,
                     },
                     Drawable::Enemy,
+                    Enemy {},
                 ));
             }
             _ => unimplemented!(),
@@ -155,9 +159,17 @@ impl QuickFormat for Color {
     }
 }
 
-struct Player {}
+struct Player {
+    direction_x: f32,
+}
+struct Enemy {}
 
 struct Missile {}
+
+/// Accelerates the direction it's facing.
+struct Accelerator {
+    amount: Vec2,
+}
 
 #[derive(Debug)]
 struct Level {
@@ -183,6 +195,8 @@ async fn main() {
 
     let mut level = levels::get_level();
 
+    let player_half_width = 15.;
+    let player_half_height = 7.5;
     let setup = |level: &Level, world: &mut World, physics: &mut Physics| -> Entity {
         for thing in &level.things {
             thing.spawn(physics, world);
@@ -194,14 +208,15 @@ async fn main() {
             1.0,
             Vec2::new(0., water_level + 200.),
             Collider::Rectangle {
-                half_width: 15.,
-                half_height: 7.5,
+                half_width: player_half_width / 2.,
+                half_height: player_half_height / 2.,
             },
             1.0,
+            0.98,
         ));
 
         world.spawn((
-            Player {},
+            Player { direction_x: 1.0 },
             Thing {
                 color: RED,
                 destructable: false,
@@ -210,12 +225,12 @@ async fn main() {
             Drawable::Player,
         ))
     };
-    let mut physics = Physics::new();
+    let mut physics = Physics::new(water_level);
     physics.gravity = 0.2;
 
     let mut player_entity = setup(&level, &mut world, &mut physics);
-    let missile_size = Vec2::new(20., 10.);
-    let mut entities_to_despawn = Vec::new();
+    let missile_size = Vec2::new(10., 5.);
+    //let mut entities_to_despawn = Vec::new();
 
     let mut in_level_editor = false;
     let mut editor_mode = 1;
@@ -260,15 +275,28 @@ async fn main() {
 
             // info!("PLAYER CENTER: {:?}", player_center);
 
-            for entity in entities_to_despawn.drain(..) {
-                let _ = world.despawn(entity);
+            // Make enemies follow player
+            for (_entity, (thing, _enemy)) in &mut world.query::<(&Thing, &Enemy)>() {
+                let p = physics.get_mut(thing.physics_handle);
+                let diff = player_center - p.position;
+                let distance = diff.length();
+                if distance < 800. {
+                    p.apply_force(0.2 * diff.normalize())
+                }
             }
 
+            // Accelerate things
+            for (_entity, (thing, accelerator)) in &mut world.query::<(&Thing, &Accelerator)>() {
+                let p = physics.get_mut(thing.physics_handle);
+                p.apply_force(accelerator.amount)
+            }
+
+            let mut missile_to_spawn = None;
             {
                 let mut query = world
-                    .query_one::<(&Player, &mut Thing)>(player_entity)
+                    .query_one::<(&mut Player, &mut Thing)>(player_entity)
                     .unwrap();
-                let (_player, player_thing) = query.get().unwrap();
+                let (player, player_thing) = query.get().unwrap();
 
                 let player_physics = physics.get_mut(player_thing.physics_handle);
                 // Player controls
@@ -280,30 +308,22 @@ async fn main() {
 
                     let player_acceleration = 0.1;
                     if is_key_down(KeyCode::Left) || is_key_down(KeyCode::A) {
-                        physics.apply_force(
-                            player_thing.physics_handle,
-                            Vec2::new(-player_acceleration, 0.),
-                        );
+                        player_physics.apply_force(Vec2::new(-player_acceleration, 0.));
+                        player.direction_x = -1.0;
                     }
                     if is_key_down(KeyCode::Right) || is_key_down(KeyCode::D) {
-                        physics.apply_force(
-                            player_thing.physics_handle,
-                            Vec2::new(player_acceleration, 0.),
-                        );
+                        player_physics.apply_force(Vec2::new(player_acceleration, 0.));
+                        player.direction_x = 1.0;
                     }
                     if is_key_down(KeyCode::Up) || is_key_down(KeyCode::W) {
-                        physics.apply_force(
-                            player_thing.physics_handle,
-                            Vec2::new(0., -player_acceleration),
-                        );
+                        player_physics.apply_force(Vec2::new(0., -player_acceleration));
                     }
                     if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
-                        physics.apply_force(
-                            player_thing.physics_handle,
-                            Vec2::new(0., player_acceleration),
-                        );
+                        player_physics.apply_force(Vec2::new(0., player_acceleration));
                     }
                 }
+
+                let player_velocity = player_physics.velocity();
 
                 // Check the player against walls
                 /*
@@ -339,43 +359,50 @@ async fn main() {
                     ..Default::default()
                 });
 
-                /*
                 // Fire missile
                 if is_key_pressed(KeyCode::Space) {
-                    let new_position = (player_thing.rect.point()
-                        + Vec2::new(player_thing.rect.w / 2., player_thing.rect.h))
+                    let position = (player_physics.position
+                        + Vec2::new(player_half_width, player_half_height))
                         + Vec2::new(-missile_size.x / 2., missile_size.y / 2.);
 
-                    let acceleration_direction =
-                        Vec2::new(player_thing.velocity.x, 0.).normalize() * 0.1;
-                    player_thing.velocity -= acceleration_direction * 20.;
-                    missile_to_spawn = Some(Thing {
-                        rect: Rect {
-                            x: new_position.x,
-                            y: new_position.y,
-                            w: missile_size.x,
-                            h: missile_size.y,
+                    let acceleration_direction = Vec2::new(player.direction_x, 0.4) * 0.1;
+                    player_physics.apply_force(-acceleration_direction * 20.);
+
+                    let mut physics_object = PhysicsObject::new(
+                        2.0,
+                        position,
+                        Collider::Rectangle {
+                            half_width: missile_size.x,
+                            half_height: missile_size.y,
                         },
-                        velocity: player_thing.velocity * 0.8 + acceleration_direction * 10.,
-                        acceleration: acceleration_direction,
-                        color: BLUE,
-                        friction: 1.0,
-                        destructable: false,
-                        mass: 2.0,
-                        physics_handle: PhysicsHandle::empty(),
-                        thing_type: ThingType::Missile,
-                    });
+                        1.0,
+                        1.0,
+                    );
+                    physics_object.apply_force(acceleration_direction * 10.);
+                    let physics_handle = physics.push(physics_object);
+                    missile_to_spawn = Some((
+                        Thing {
+                            color: BLUE,
+                            destructable: false,
+                            physics_handle: physics_handle,
+                        },
+                        player.direction_x,
+                    ));
                 }
-                */
             }
 
             // Separated out to avoid borrow checker complaints.
-            /*
-            if let Some(missile_to_spawn) = missile_to_spawn.take() {
-                world.spawn((missile_to_spawn, Missile {}));
-            }
 
-            */
+            if let Some((missile_to_spawn, direction)) = missile_to_spawn.take() {
+                world.spawn((
+                    missile_to_spawn,
+                    Missile {},
+                    Drawable::Missile,
+                    Accelerator {
+                        amount: Vec2::new(direction * 0.05, 0.0),
+                    },
+                ));
+            }
 
             set_camera(&Camera2D {
                 target: vec2(0., camera_focal_y),
