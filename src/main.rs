@@ -30,13 +30,8 @@ struct Thing {
     /// If this is 1.0 that means there's no friction
     destructable: bool,
     physics_handle: PhysicsHandle,
+    index_in_level: Option<usize>,
 }
-
-pub(crate) const ENEMY: Thing = Thing {
-    color: GREEN,
-    destructable: true,
-    physics_handle: PhysicsHandle::empty(),
-};
 
 #[derive(Debug)]
 struct LevelItem {
@@ -46,7 +41,7 @@ struct LevelItem {
 }
 
 impl LevelItem {
-    pub fn spawn(&self, physics: &mut Physics, world: &mut World) {
+    pub fn spawn(&self, physics: &mut Physics, world: &mut World, index_in_level: usize) {
         match self.thing_type {
             // Need to spawn things here
             ThingType::Rock => {
@@ -66,6 +61,7 @@ impl LevelItem {
                         color: BLACK,
                         destructable: false,
                         physics_handle,
+                        index_in_level: Some(index_in_level),
                     },
                     Drawable::Rock,
                 ));
@@ -86,6 +82,7 @@ impl LevelItem {
                         color: GREEN,
                         destructable: false,
                         physics_handle,
+                        index_in_level: Some(index_in_level),
                     },
                     Drawable::Enemy,
                     Enemy {},
@@ -186,7 +183,7 @@ async fn main() {
 
     let max_color_lerp_depth = 3000.;
     //
-    let min_camera_zoom = 0.7;
+    let min_camera_zoom = 0.8;
     let max_camera_zoom = 2.0;
     let mut camera_focal_y = screen_height() / 2.0;
     let main_area_width = 570.;
@@ -197,10 +194,12 @@ async fn main() {
 
     let player_half_width = 15.;
     let player_half_height = 7.5;
-    let player_spawn_offset = 300.;
+    let player_spawn_offset = 0.;
     let setup = |level: &Level, world: &mut World, physics: &mut Physics| -> Entity {
-        for thing in &level.things {
-            thing.spawn(physics, world);
+        world.clear();
+        physics.clear();
+        for (index_in_level, thing) in level.things.iter().enumerate() {
+            thing.spawn(physics, world, index_in_level);
         }
 
         // Spawn player
@@ -222,6 +221,7 @@ async fn main() {
                 color: RED,
                 destructable: false,
                 physics_handle: physics_handle,
+                index_in_level: None,
             },
             Drawable::Player,
         ))
@@ -242,8 +242,8 @@ async fn main() {
     let mut acceleration_to_apply: Vec<(Entity, Vec2)> = Vec::new();
 
     loop {
-        let left_wall = -main_area_width / 2.;
-        let right_wall = main_area_width / 2.;
+        //  let left_wall = -main_area_width / 2.;
+        //  let right_wall = main_area_width / 2.;
 
         let screen_width = screen_width();
         let screen_height = screen_height();
@@ -262,7 +262,6 @@ async fn main() {
             in_level_editor = !in_level_editor;
             if in_level_editor {
                 info!("EDITOR ENABLED");
-                world.clear();
                 player_entity = setup(&level, &mut world, &mut physics);
                 info!("LEVEL THINGS: {:?}", level.things.len());
             } else {
@@ -384,6 +383,7 @@ async fn main() {
                             color: BLUE,
                             destructable: false,
                             physics_handle: physics_handle,
+                            index_in_level: None,
                         },
                         player.direction_x,
                     ));
@@ -422,6 +422,11 @@ async fn main() {
 
             camera_zoom += mouse_wheel().1 * 0.01;
 
+            if is_key_pressed(KeyCode::Key0) {
+                info!("ERASE MODE");
+                editor_mode = 0;
+            }
+
             if is_key_pressed(KeyCode::Key1) {
                 info!("PLAYER MOVE MODE");
                 editor_mode = 1;
@@ -436,9 +441,51 @@ async fn main() {
                 info!("ENEMY DRAW MODE");
                 editor_mode = 3;
             }
-            let camera_position = camera.screen_to_world(mouse_position().into());
+            let mouse_position_in_world = camera.screen_to_world(mouse_position().into());
 
             match editor_mode {
+                0 => {
+                    if is_mouse_button_pressed(MouseButton::Left) {
+                        let mut to_despawn = None;
+                        for (entity, (thing,)) in world.query::<(&Thing,)>().iter() {
+                            let p = physics.get(thing.physics_handle);
+                            match p.collider {
+                                Collider::Circle { radius } => {
+                                    let distance = p.position - mouse_position_in_world;
+                                    if distance.length() < radius {
+                                        to_despawn = Some((entity, thing.index_in_level));
+                                    }
+                                }
+                                Collider::Rectangle {
+                                    half_width,
+                                    half_height,
+                                } => {
+                                    let distance = (p.position - mouse_position_in_world).abs();
+                                    if distance.x < half_width && distance.y < half_height {
+                                        to_despawn = Some((entity, thing.index_in_level));
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some((to_despawn, index)) = to_despawn {
+                            if let Some(index) = index {
+                                // We need to despawn in the physics, the level, and the ECS
+                                let _ = world.despawn(to_despawn);
+                                level.things.swap_remove(index);
+
+                                // Just reload the entire level, but preserve the player position.
+                                player_entity = setup(&level, &mut world, &mut physics);
+                                let mut query = world
+                                    .query_one::<(&mut Player, &mut Thing)>(player_entity)
+                                    .unwrap();
+                                let (_player, player_thing) = query.get().unwrap();
+                                physics.get_mut(player_thing.physics_handle).position =
+                                    player_center;
+                            }
+                        }
+                    }
+                }
                 1 => {
                     if is_mouse_button_pressed(MouseButton::Left) {
                         let mut query = world
@@ -446,15 +493,15 @@ async fn main() {
                             .unwrap();
                         let (_, player_thing) = query.get().unwrap();
                         let p = physics.get_mut(player_thing.physics_handle);
-                        p.position = camera_position;
-                        p.last_position = camera_position;
-                        camera_focal_y = camera_position.y;
+                        p.position = mouse_position_in_world;
+                        p.last_position = mouse_position_in_world;
+                        camera_focal_y = mouse_position_in_world.y;
                     }
                 }
                 2 | 3 => {
                     if let Some(rect) = editor_start_drag.as_mut() {
-                        rect.w = camera_position.x - rect.x;
-                        rect.h = camera_position.y - rect.y;
+                        rect.w = mouse_position_in_world.x - rect.x;
+                        rect.h = mouse_position_in_world.y - rect.y;
 
                         if is_mouse_button_released(MouseButton::Left) {
                             if rect.w < 0. {
@@ -478,15 +525,15 @@ async fn main() {
                                 },
                                 _ => unimplemented!(),
                             };
-                            level_item.spawn(&mut physics, &mut world);
+                            level_item.spawn(&mut physics, &mut world, level.things.len());
                             level.things.push(level_item);
                             editor_start_drag = None;
                         }
                     } else {
                         if is_mouse_button_down(MouseButton::Left) {
                             editor_start_drag = Some(Rect {
-                                x: camera_position.x,
-                                y: camera_position.y,
+                                x: mouse_position_in_world.x,
+                                y: mouse_position_in_world.y,
                                 w: 1.,
                                 h: 1.,
                             })

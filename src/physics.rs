@@ -65,6 +65,10 @@ impl Physics {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.objects.clear();
+    }
+
     pub fn get(&self, physics_handle: PhysicsHandle) -> &PhysicsObject {
         &self.objects[physics_handle.0]
     }
