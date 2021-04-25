@@ -95,6 +95,7 @@ impl LevelItem {
                     },
                     Drawable::Enemy,
                     Enemy {
+                        hit_player_cooldown: 0,
                         acceleration_direction: -Vec2::X,
                     },
                     Health(health),
@@ -172,8 +173,11 @@ struct Player {
     direction_x: f32,
 }
 
+const HIT_PLAYER_COOLDOWN: u32 = 30;
+
 struct Health(u32);
 struct Enemy {
+    hit_player_cooldown: u32,
     acceleration_direction: Vec2,
 }
 
@@ -310,6 +314,7 @@ async fn main() {
                 physics_handle: physics_handle,
                 index_in_level: None,
             },
+            Health(10),
             Drawable::Player,
         ))
     };
@@ -345,13 +350,13 @@ async fn main() {
         let screen_width = screen_width();
         let screen_height = screen_height();
 
-        let player_center = {
+        let (player_center, player_physics_handle) = {
             let mut query = world
                 .query_one::<(&Player, &mut Thing)>(player_entity)
                 .unwrap();
             let (_player, player_thing) = query.get().unwrap();
             let p = physics.get(player_thing.physics_handle).unwrap();
-            p.position
+            (p.position, player_thing.physics_handle)
         };
 
         // Toggle the level editor
@@ -376,6 +381,7 @@ async fn main() {
             for (_entity, (thing, enemy, health)) in
                 &mut world.query::<(&Thing, &mut Enemy, &Health)>()
             {
+                enemy.hit_player_cooldown = enemy.hit_player_cooldown.saturating_sub(1);
                 let p = physics.get_mut(thing.physics_handle).unwrap();
 
                 if health.0 > 0 {
@@ -383,10 +389,31 @@ async fn main() {
                     enemy.acceleration_direction = diff;
                     let distance = diff.length();
                     if distance < 800. {
-                        p.apply_force(0.2 * diff.normalize())
-                    }
+                        p.apply_force(0.2 * diff.normalize());
 
-                    // Player damage checks could go here as well.
+                        let radius = match p.collider {
+                            Collider::Circle { radius } => radius,
+                            _ => unimplemented!(),
+                        };
+
+                        // Player damage checks
+                        if enemy.hit_player_cooldown == 0
+                            && distance < player_half_height + radius + 10.
+                        {
+                            physics
+                                .get_mut(player_physics_handle)
+                                .unwrap()
+                                .apply_force(5. * diff.normalize());
+                            info!("PLAYER HIT");
+                            enemy.hit_player_cooldown = HIT_PLAYER_COOLDOWN;
+
+                            // Subtract player health
+                            for (_, (_, health)) in &mut world.query::<(&Player, &mut Health)>() {
+                                health.0 = health.0.saturating_sub(1);
+                                info!("PLAYER HEALTH: {:?}", health.0)
+                            }
+                        }
+                    }
                 } else {
                     // Sink when dead
                     p.apply_force(Vec2::Y * 0.02)
@@ -790,6 +817,8 @@ async fn main() {
                                 tooth_fish_texture
                             };
 
+                            // Make radius slightly bigger to allow player to have close grazes with enemy
+                            let radius = radius * 1.1;
                             draw_texture_ex(
                                 texture,
                                 physics_object.position.x - radius,
@@ -842,7 +871,7 @@ async fn main() {
 
             if !explosion.damaged {
                 explosion.damaged = true;
-                for (_entity, (thing, enemy, health)) in
+                for (_entity, (thing, _enemy, health)) in
                     &mut world.query::<(&Thing, &mut Enemy, &mut Health)>()
                 {
                     let p = physics.get_mut(thing.physics_handle).unwrap();
