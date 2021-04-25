@@ -199,18 +199,37 @@ struct ExplosionPiece {
     color: Color,
 }
 struct Explosion {
+    radius: f32,
+    scale: f32,
     center: Vec2,
     pieces: Vec<ExplosionPiece>,
     damaged: bool,
+    follow_player: bool,
 }
 
-const EXPLOSION_RADIUS: f32 = 70.0;
 impl Explosion {
+    pub fn new(center: Vec2, radius: f32, scale: f32, follow_player: bool) -> Self {
+        let number_of_pieces = rand::gen_range(4, 8);
+        let pieces = Vec::with_capacity(number_of_pieces);
+        let mut s = Self {
+            radius,
+            scale,
+            center,
+            pieces,
+            damaged: false,
+            follow_player,
+        };
+        for _ in 0..number_of_pieces {
+            s.spawn_piece();
+        }
+        s
+    }
+
     pub fn spawn_piece(&mut self) {
         let max_radius = 20.;
 
-        let rand_x = gen_range(-max_radius, max_radius);
-        let rand_y = gen_range(-max_radius, max_radius);
+        let rand_x = gen_range(-max_radius, max_radius) * self.scale;
+        let rand_y = gen_range(-max_radius, max_radius) * self.scale;
 
         let color = match gen_range(0, 3) {
             0 => Color::new(212. / 255., 39. / 255., 15. / 255., 1.0),
@@ -221,25 +240,15 @@ impl Explosion {
 
         self.pieces.push(ExplosionPiece {
             position: self.center + Vec2::new(rand_x, rand_y),
-            radius: gen_range(20., EXPLOSION_RADIUS - max_radius),
+            radius: gen_range(20., self.radius - max_radius) * self.scale,
             color,
         })
     }
-    pub fn new(center: Vec2) -> Self {
-        let number_of_pieces = rand::gen_range(4, 8);
-        let pieces = Vec::with_capacity(number_of_pieces);
-        let mut s = Self {
-            center,
-            pieces,
-            damaged: false,
-        };
-        for _ in 0..number_of_pieces {
-            s.spawn_piece();
-        }
-        s
-    }
 
-    pub fn draw(&mut self) {
+    pub fn draw(&mut self, player_position: Vec2) {
+        if self.follow_player {
+            self.center = player_position;
+        }
         if gen_range(0, 100) < 35 {
             self.spawn_piece()
         }
@@ -314,6 +323,7 @@ async fn main() {
                 physics_handle: physics_handle,
                 index_in_level: None,
             },
+            // Player health
             Health(10),
             Drawable::Player,
         ))
@@ -409,8 +419,29 @@ async fn main() {
 
                             // Subtract player health
                             for (_, (_, health)) in &mut world.query::<(&Player, &mut Health)>() {
+                                let old_health = health.0;
                                 health.0 = health.0.saturating_sub(1);
-                                info!("PLAYER HEALTH: {:?}", health.0)
+                                info!("PLAYER HEALTH: {:?}", health.0);
+
+                                if old_health > 0 {
+                                    if health.0 == 0 {
+                                        // Player died!
+                                        explosions_to_spawn.push(Explosion::new(
+                                            player_center,
+                                            80.,
+                                            0.5,
+                                            true,
+                                        ))
+                                    } else {
+                                        // Player was damaged
+                                        explosions_to_spawn.push(Explosion::new(
+                                            player_center,
+                                            30.,
+                                            0.6,
+                                            true,
+                                        ))
+                                    }
+                                }
                             }
                         }
                     }
@@ -427,22 +458,26 @@ async fn main() {
                 }
             }
 
+            let player_physics = {
+                let mut query = world
+                    .query_one::<(&mut Player, &mut Thing, &Health)>(player_entity)
+                    .unwrap();
+                let (player, player_thing, health) = query.get().unwrap();
+                physics.get_mut(player_thing.physics_handle).unwrap()
+            };
+
             let mut missile_to_spawn = None;
+            // Player controls
             {
                 let mut query = world
-                    .query_one::<(&mut Player, &mut Thing)>(player_entity)
+                    .query_one::<(&mut Player, &mut Thing, &Health)>(player_entity)
                     .unwrap();
-                let (player, player_thing) = query.get().unwrap();
+                let (player, player_thing, health) = query.get().unwrap();
 
-                let player_physics = physics.get_mut(player_thing.physics_handle).unwrap();
-                // Player controls
-                let player_acceleration = 0.1;
+                if health.0 > 0 {
+                    // Player controls
+                    let player_acceleration = 0.1;
 
-                if player_center.y < water_level {
-                    if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
-                        player_physics.apply_force(Vec2::new(0., player_acceleration));
-                    }
-                } else {
                     if is_key_down(KeyCode::Left) || is_key_down(KeyCode::A) {
                         player_physics.apply_force(Vec2::new(-player_acceleration, 0.));
                         player.direction_x = -1.0;
@@ -451,80 +486,88 @@ async fn main() {
                         player_physics.apply_force(Vec2::new(player_acceleration, 0.));
                         player.direction_x = 1.0;
                     }
-                    if is_key_down(KeyCode::Up) || is_key_down(KeyCode::W) {
-                        player_physics.apply_force(Vec2::new(0., -player_acceleration));
+                    if player_center.y > water_level {
+                        if is_key_down(KeyCode::Up) || is_key_down(KeyCode::W) {
+                            player_physics.apply_force(Vec2::new(0., -player_acceleration));
+                        }
                     }
+
                     if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
                         player_physics.apply_force(Vec2::new(0., player_acceleration));
                     }
-                }
 
-                // Check the player against walls
-                /*
-                if player_thing.rect.left() < left_wall {
-                    player_thing.rect.x = left_wall;
-                    player_thing.velocity.x = 0.;
-                }
+                    // Check the player against walls
+                    /*
+                    if player_thing.rect.left() < left_wall {
+                        player_thing.rect.x = left_wall;
+                        player_thing.velocity.x = 0.;
+                    }
 
-                if player_thing.rect.x + player_thing.rect.w > right_wall {
-                    player_thing.rect.x = right_wall - player_thing.rect.w;
-                    player_thing.velocity.x = 0.;
-                }*/
+                    if player_thing.rect.x + player_thing.rect.w > right_wall {
+                        player_thing.rect.x = right_wall - player_thing.rect.w;
+                        player_thing.velocity.x = 0.;
+                    }*/
 
-                // Zoom the camera as the player goes deeper at the start.
-                let depth_lerp = ((player_center.y - water_level) / max_color_lerp_depth)
-                    .min(1.0)
-                    .max(0.0);
+                    // Zoom the camera as the player goes deeper at the start.
+                    let depth_lerp = ((player_center.y - water_level) / max_color_lerp_depth)
+                        .min(1.0)
+                        .max(0.0);
 
-                camera_zoom = (max_camera_zoom - min_camera_zoom) * depth_lerp + min_camera_zoom;
+                    camera_zoom =
+                        (max_camera_zoom - min_camera_zoom) * depth_lerp + min_camera_zoom;
 
-                let camera_buffer = (screen_height / camera_zoom) * 2.0 * 0.3;
-                if player_center.y > camera_focal_y + camera_buffer {
-                    camera_focal_y = player_center.y - camera_buffer;
-                }
+                    let camera_buffer = (screen_height / camera_zoom) * 2.0 * 0.3;
+                    if player_center.y > camera_focal_y + camera_buffer {
+                        camera_focal_y = player_center.y - camera_buffer;
+                    }
 
-                if player_center.y < camera_focal_y - camera_buffer {
-                    camera_focal_y = player_center.y + camera_buffer;
-                }
+                    if player_center.y < camera_focal_y - camera_buffer {
+                        camera_focal_y = player_center.y + camera_buffer;
+                    }
 
-                set_camera(&Camera2D {
-                    target: vec2(0., camera_focal_y),
-                    zoom: Vec2::new(camera_zoom / screen_width, -camera_zoom / screen_height),
-                    ..Default::default()
-                });
+                    set_camera(&Camera2D {
+                        target: vec2(0., camera_focal_y),
+                        zoom: Vec2::new(camera_zoom / screen_width, -camera_zoom / screen_height),
+                        ..Default::default()
+                    });
 
-                // Fire missile
-                if is_key_pressed(KeyCode::Space) {
-                    let position = player_physics.position
-                        + Vec2::new(
-                            player.direction_x * (missile_size.x / 2. + 2.0 + player_half_width),
-                            0.,
+                    // Fire missile
+                    if is_key_pressed(KeyCode::Space) {
+                        let position = player_physics.position
+                            + Vec2::new(
+                                player.direction_x
+                                    * (missile_size.x / 2. + 2.0 + player_half_width),
+                                0.,
+                            );
+
+                        let acceleration_direction = Vec2::new(player.direction_x, 0.0) * 0.1;
+                        player_physics.apply_force(-acceleration_direction * 10.);
+
+                        let mut physics_object = PhysicsObject::new(
+                            2.0,
+                            position,
+                            Collider::Rectangle {
+                                half_width: missile_size.x,
+                                half_height: missile_size.y,
+                            },
+                            1.0,
+                            1.0,
                         );
-
-                    let acceleration_direction = Vec2::new(player.direction_x, 0.0) * 0.1;
-                    player_physics.apply_force(-acceleration_direction * 10.);
-
-                    let mut physics_object = PhysicsObject::new(
-                        2.0,
-                        position,
-                        Collider::Rectangle {
-                            half_width: missile_size.x,
-                            half_height: missile_size.y,
-                        },
-                        1.0,
-                        1.0,
-                    );
-                    physics_object.apply_force(acceleration_direction * 10.);
-                    let physics_handle = physics.push(physics_object);
-                    missile_to_spawn = Some((
-                        Thing {
-                            color: BLUE,
-                            destructable: false,
-                            physics_handle: physics_handle,
-                            index_in_level: None,
-                        },
-                        player.direction_x,
-                    ));
+                        physics_object.apply_force(acceleration_direction * 10.);
+                        let physics_handle = physics.push(physics_object);
+                        missile_to_spawn = Some((
+                            Thing {
+                                color: BLUE,
+                                destructable: false,
+                                physics_handle: physics_handle,
+                                index_in_level: None,
+                            },
+                            player.direction_x,
+                        ));
+                    }
+                } else {
+                    // Sink when dead
+                    player_physics.apply_force(Vec2::Y * 0.02)
                 }
             }
 
@@ -555,10 +598,25 @@ async fn main() {
                     if p.last_collision_impact.length() > 0.5 {
                         // info!("MISSILE IMPACT: {:?}", p.last_collision_impact.length());
                         entities_to_despawn.push(entity);
-                        explosions_to_spawn.push(Explosion::new(p.position));
+                        explosions_to_spawn.push(Explosion::new(p.position, 70., 1.0, false));
 
                         physics.remove(thing.physics_handle)
                     }
+                }
+            }
+
+            // Check if the player is dead
+            {
+                let player_health = {
+                    let mut query = world
+                        .query_one::<(&mut Player, &Health)>(player_entity)
+                        .unwrap();
+                    let (player, health) = query.get().unwrap();
+                    health.0
+                };
+
+                if player_health == 0 {
+                    info!("THE PLAYER IS DEAD");
                 }
             }
 
@@ -779,12 +837,14 @@ async fn main() {
                             half_width,
                             half_height,
                         } => {
+                            let health = health.unwrap().0;
+                            let color = if health == 0 { GRAY } else { thing.color };
                             draw_rectangle(
                                 physics_object.position.x - half_width,
                                 physics_object.position.y - half_height,
                                 half_width * 2.,
                                 half_height * 2.,
-                                thing.color,
+                                color,
                             );
 
                             if player.unwrap().direction_x > 0. {
@@ -792,14 +852,14 @@ async fn main() {
                                     physics_object.position.x + half_width,
                                     physics_object.position.y,
                                     half_height,
-                                    thing.color,
+                                    color,
                                 );
                             } else {
                                 draw_circle(
                                     physics_object.position.x - half_width,
                                     physics_object.position.y,
                                     half_height,
-                                    thing.color,
+                                    color,
                                 );
                             }
                         }
@@ -862,14 +922,14 @@ async fn main() {
 
         // Draw and update explosions
         for (entity, explosion) in &mut world.query::<&mut Explosion>() {
-            explosion.draw();
+            explosion.draw(player_center);
             if explosion.pieces.len() == 0 {
                 entities_to_despawn.push(entity);
             }
 
             // Check if an enemy is within an explosion
 
-            if !explosion.damaged {
+            if !explosion.damaged && !explosion.follow_player {
                 explosion.damaged = true;
                 for (_entity, (thing, _enemy, health)) in
                     &mut world.query::<(&Thing, &mut Enemy, &mut Health)>()
@@ -882,21 +942,17 @@ async fn main() {
                         _ => unreachable!(),
                     };
 
-                    let distance = EXPLOSION_RADIUS + radius;
+                    let distance = explosion.radius + radius;
                     let distance_squared = distance * distance;
 
-                    const THRESHOLD: f32 = 500.;
-                    const THRESHOLD_SQUARED: f32 = THRESHOLD * THRESHOLD;
+                    let threshold = distance_squared * 1.2;
 
-                    if distance_squared < THRESHOLD_SQUARED {
-                        p.apply_force(
-                            (distance_squared / THRESHOLD_SQUARED) * diff.normalize() * 100.,
-                        );
-                        if diff.length_squared() < distance_squared {
-                            // Kill it!
-                            p.mass = 0.5;
-                            health.0 = health.0.saturating_sub(1);
-                        }
+                    if diff.length_squared() < distance_squared {
+                        p.apply_force((distance_squared / threshold) * diff.normalize() * 10.);
+
+                        // Kill it!
+                        p.mass = 0.5;
+                        health.0 = health.0.saturating_sub(1);
                     }
                 }
             }
