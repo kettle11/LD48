@@ -15,6 +15,7 @@ pub struct PhysicsObject {
     pub last_collision_impact: Vec2,
     indirection_index: usize,
     pub is_missile: bool,
+    pub holding_down: bool,
 }
 impl PhysicsObject {
     pub const fn new(
@@ -34,6 +35,7 @@ impl PhysicsObject {
             last_collision_impact: Vec2::ZERO,
             indirection_index: 0,
             is_missile: false,
+            holding_down: false,
         }
     }
 
@@ -135,9 +137,9 @@ impl Physics {
 
             // Only apply gravity above water level
             if object.position.y < self.water_level {
-                if (object.position.y - self.water_level).abs() < 1.0 {
+                if (object.position.y - self.water_level).abs() < 1.0 && !object.holding_down {
                     // Apply a little buoyancy
-                    object.position.y -= 0.07 * object.gravity_multiplier;
+                    object.position.y -= 0.6 * object.gravity_multiplier;
                 } else {
                     // Apply gravity
                     object.position.y += self.gravity * object.gravity_multiplier;
@@ -145,9 +147,11 @@ impl Physics {
             } else
             // For the other side apply the opposite effects
             if object.position.y > self.victory_water_level {
-                if (object.position.y - self.victory_water_level).abs() < 1.0 {
+                if (object.position.y - self.victory_water_level).abs() < 1.0
+                    && !object.holding_down
+                {
                     // Apply more buoyancy
-                    object.position.y += 0.12 * object.gravity_multiplier;
+                    object.position.y += 0.6 * object.gravity_multiplier;
                 } else {
                     object.position.y -= 0.07 * object.gravity_multiplier;
                 }
@@ -157,118 +161,6 @@ impl Physics {
         let len = self.objects.len();
         for i in 0..len {
             for j in i + 1..len {
-                fn circle_collision(
-                    p0: &mut Vec2,
-                    p1: &mut Vec2,
-                    r0: f32,
-                    r1: f32,
-                    mass_ratio: f32,
-                    c0: &mut Vec2,
-                    c1: &mut Vec2,
-                ) {
-                    let diff = *p1 - *p0;
-                    let radius_sum = r0 + r1;
-                    if diff.length() < radius_sum {
-                        let offset = diff - diff.normalize() * radius_sum;
-
-                        // Store the collision offset for later to make missiles explode.
-                        let o0 = offset * mass_ratio;
-                        let o1 = offset * (1.0 - mass_ratio);
-                        *c0 = o0;
-                        *c1 = o1;
-                        *p0 += o0;
-                        *p1 -= o1;
-                    }
-                }
-
-                fn rectangle_rectangle(
-                    p0: &mut Vec2,
-                    p1: &mut Vec2,
-                    h0: Vec2,
-                    h1: Vec2,
-                    mass_ratio: f32,
-                    c0: &mut Vec2,
-                    c1: &mut Vec2,
-                ) {
-                    let diff = *p1 - *p0;
-                    let half_sum = h0 + h1;
-
-                    let penetration = half_sum - Vec2::new(diff.x.abs(), diff.y.abs());
-
-                    if penetration.x > 0. && penetration.y > 0. {
-                        let offset_horizontal = Vec2::new(-penetration.x * diff.x.signum(), 0.);
-                        let offset_vertical = Vec2::new(0., -penetration.y * diff.y.signum());
-
-                        let diff = penetration.x - penetration.y;
-
-                        let offset = if diff < 0. {
-                            // Push apart along y
-                            offset_horizontal
-                        } else {
-                            offset_vertical
-                        };
-
-                        let o0 = offset * mass_ratio;
-                        let o1 = offset * (1.0 - mass_ratio);
-
-                        *c0 = o0;
-                        *c1 = o1;
-
-                        *p0 += o0;
-                        *p1 -= o1;
-                    }
-                }
-
-                fn circle_rectangle(
-                    circle_position: &mut Vec2,
-                    rect_position: &mut Vec2,
-                    radius: f32,
-                    half_width: f32,
-                    half_height: f32,
-                    mass_ratio: f32,
-                    c0: &mut Vec2,
-                    c1: &mut Vec2,
-                ) {
-                    let diff = *circle_position - *rect_position;
-                    let circle_distance = (diff).abs();
-                    let halfs = Vec2::new(half_width + radius, half_height + radius);
-                    let offsets = (circle_distance - halfs) * diff.signum();
-
-                    if !(circle_distance.x > halfs.x) && !(circle_distance.y > halfs.y) {
-                        if circle_distance.x <= half_width {
-                            let o0 = offsets.y * mass_ratio;
-                            let o1 = offsets.y * (1.0 - mass_ratio);
-                            circle_position.y -= o0;
-                            rect_position.y += o1;
-                            *c0 = Vec2::new(0., o0);
-                            *c1 = Vec2::new(0., o1);
-                        } else if circle_distance.y <= half_height {
-                            let o0 = offsets.x * mass_ratio;
-                            let o1 = offsets.x * (1.0 - mass_ratio);
-                            circle_position.x -= o0;
-                            rect_position.x += o1;
-                            *c0 = Vec2::new(o0, 0.);
-                            *c1 = Vec2::new(o1, 0.);
-                        } else {
-                            let corner_distance = (circle_distance.x - half_width).powf(2.)
-                                + (circle_distance.y - half_height).powf(2.);
-                            let radius_squared = radius.powf(2.);
-                            if corner_distance <= radius_squared {
-                                let offset = (corner_distance.sqrt() - radius_squared.sqrt()).abs();
-                                let offsets = offset * -diff.normalize();
-
-                                let o0 = offsets * mass_ratio;
-                                let o1 = offsets * (1.0 - mass_ratio);
-
-                                *c0 = o0;
-                                *c1 = o1;
-                                *circle_position -= o0;
-                                *rect_position += o1;
-                            }
-                        }
-                    }
-                }
-
                 let (object0, object1) = index_twice(&mut self.objects, i, j);
                 if object0.mass == f32::INFINITY && object1.mass == f32::INFINITY {
                     continue;
@@ -351,6 +243,118 @@ impl Physics {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+fn circle_collision(
+    p0: &mut Vec2,
+    p1: &mut Vec2,
+    r0: f32,
+    r1: f32,
+    mass_ratio: f32,
+    c0: &mut Vec2,
+    c1: &mut Vec2,
+) {
+    let diff = *p1 - *p0;
+    let radius_sum = r0 + r1;
+    if diff.length() < radius_sum {
+        let offset = diff - diff.normalize() * radius_sum;
+
+        // Store the collision offset for later to make missiles explode.
+        let o0 = offset * mass_ratio;
+        let o1 = offset * (1.0 - mass_ratio);
+        *c0 = o0;
+        *c1 = o1;
+        *p0 += o0;
+        *p1 -= o1;
+    }
+}
+
+fn rectangle_rectangle(
+    p0: &mut Vec2,
+    p1: &mut Vec2,
+    h0: Vec2,
+    h1: Vec2,
+    mass_ratio: f32,
+    c0: &mut Vec2,
+    c1: &mut Vec2,
+) {
+    let diff = *p1 - *p0;
+    let half_sum = h0 + h1;
+
+    let penetration = half_sum - Vec2::new(diff.x.abs(), diff.y.abs());
+
+    if penetration.x > 0. && penetration.y > 0. {
+        let offset_horizontal = Vec2::new(-penetration.x * diff.x.signum(), 0.);
+        let offset_vertical = Vec2::new(0., -penetration.y * diff.y.signum());
+
+        let diff = penetration.x - penetration.y;
+
+        let offset = if diff < 0. {
+            // Push apart along y
+            offset_horizontal
+        } else {
+            offset_vertical
+        };
+
+        let o0 = offset * mass_ratio;
+        let o1 = offset * (1.0 - mass_ratio);
+
+        *c0 = o0;
+        *c1 = o1;
+
+        *p0 += o0;
+        *p1 -= o1;
+    }
+}
+
+fn circle_rectangle(
+    circle_position: &mut Vec2,
+    rect_position: &mut Vec2,
+    radius: f32,
+    half_width: f32,
+    half_height: f32,
+    mass_ratio: f32,
+    c0: &mut Vec2,
+    c1: &mut Vec2,
+) {
+    let diff = *circle_position - *rect_position;
+    let circle_distance = (diff).abs();
+    let halfs = Vec2::new(half_width + radius, half_height + radius);
+    let offsets = (circle_distance - halfs) * diff.signum();
+
+    if !(circle_distance.x > halfs.x) && !(circle_distance.y > halfs.y) {
+        if circle_distance.x <= half_width {
+            let o0 = offsets.y * mass_ratio;
+            let o1 = offsets.y * (1.0 - mass_ratio);
+            circle_position.y -= o0;
+            rect_position.y += o1;
+            *c0 = Vec2::new(0., o0);
+            *c1 = Vec2::new(0., o1);
+        } else if circle_distance.y <= half_height {
+            let o0 = offsets.x * mass_ratio;
+            let o1 = offsets.x * (1.0 - mass_ratio);
+            circle_position.x -= o0;
+            rect_position.x += o1;
+            *c0 = Vec2::new(o0, 0.);
+            *c1 = Vec2::new(o1, 0.);
+        } else {
+            let corner_distance = (circle_distance.x - half_width).powf(2.)
+                + (circle_distance.y - half_height).powf(2.);
+            let radius_squared = radius.powf(2.);
+            if corner_distance <= radius_squared {
+                let offset = (corner_distance.sqrt() - radius_squared.sqrt()).abs();
+                let offsets = offset * -diff.normalize();
+
+                let o0 = offsets * mass_ratio;
+                let o1 = offsets * (1.0 - mass_ratio);
+
+                *c0 = o0;
+                *c1 = o1;
+                *circle_position -= o0;
+                *rect_position += o1;
             }
         }
     }

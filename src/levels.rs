@@ -2103,9 +2103,109 @@ pub(crate) fn get_level() -> Level {
                 thing_type: ThingType::Checkpoint,
             },
             LevelItem {
+                position: Vec2::new(-123.61114, 33457.844),
+                half_size: Vec2::new(1.8518448, 12.962891),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-112.96298, 33456.453),
+                half_size: Vec2::new(8.796307, 3.2421875),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-143.9815, 33475.438),
+                half_size: Vec2::new(3.7036896, 20.36914),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-129.16669, 33469.414),
+                half_size: Vec2::new(14.8148155, 3.2402344),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-251.61298, 33632.844),
+                half_size: Vec2::new(93.54841, 144.08594),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-148.14818, 33498.117),
+                half_size: Vec2::new(20.833328, 5.091797),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-87.03706, 33506.453),
+                half_size: Vec2::new(2.3148193, 10.6484375),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-98.14817, 33522.656),
+                half_size: Vec2::new(2.3148193, 14.814453),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
                 position: Vec2::new(-2980.0002, 33649.773),
                 half_size: Vec2::new(160.0, 140.00195),
                 thing_type: ThingType::Enemy,
+            },
+            LevelItem {
+                position: Vec2::new(-88.8889, 33518.027),
+                half_size: Vec2::new(9.722218, 2.7773438),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-124.7312, 33567.25),
+                half_size: Vec2::new(13.978527, 37.634766),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-95.37039, 33538.86),
+                half_size: Vec2::new(18.055573, 3.2402344),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-319.35486, 33644.67),
+                half_size: Vec2::new(60.215042, 102.15039),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-61.574066, 33554.14),
+                half_size: Vec2::new(2.7777767, 7.408203),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-77.41937, 33578.004),
+                half_size: Vec2::new(5.376362, 31.183594),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-64.81482, 33561.547),
+                half_size: Vec2::new(9.722218, 2.7773438),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-108.60217, 33617.79),
+                half_size: Vec2::new(25.806438, 27.957031),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-133.33337, 33690.906),
+                half_size: Vec2::new(80.64518, 94.62305),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-11.574062, 33637.008),
+                half_size: Vec2::new(1.8518434, 7.8691406),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-26.881744, 33655.42),
+                half_size: Vec2::new(6.4516096, 18.279297),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-17.592594, 33647.195),
+                half_size: Vec2::new(8.796286, 2.3144531),
+                thing_type: ThingType::Rock,
             },
             LevelItem {
                 position: Vec2::new(308.69577, 33650.99),
@@ -2113,9 +2213,34 @@ pub(crate) fn get_level() -> Level {
                 thing_type: ThingType::Checkpoint,
             },
             LevelItem {
+                position: Vec2::new(-34.408607, 33672.625),
+                half_size: Vec2::new(24.73119, 9.677734),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-20.833351, 33688.86),
+                half_size: Vec2::new(1.8518438, 12.5),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-150.53764, 33869.402),
+                half_size: Vec2::new(80.64513, 133.33203),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
                 position: Vec2::new(-2049.9998, 33859.773),
                 half_size: Vec2::new(70.00006, 70.0),
                 thing_type: ThingType::Enemy,
+            },
+            LevelItem {
+                position: Vec2::new(-226.88171, 33900.586),
+                half_size: Vec2::new(83.870995, 110.75391),
+                thing_type: ThingType::Rock,
+            },
+            LevelItem {
+                position: Vec2::new(-304.3011, 33933.92),
+                half_size: Vec2::new(51.612877, 66.666016),
+                thing_type: ThingType::Rock,
             },
             LevelItem {
                 position: Vec2::new(334.7827, 34068.38),

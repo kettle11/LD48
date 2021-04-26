@@ -310,7 +310,7 @@ impl Explosion {
     }
 }
 
-static mut UPGRADES_COLLECTED: u32 = 1;
+static mut UPGRADES_COLLECTED: u32 = 0;
 const TORPEDO_UPGRADE_RADIUS: f32 = 35.;
 #[macroquad::main("Sub")]
 async fn main() {
@@ -445,13 +445,8 @@ async fn main() {
     let mut camera_target_angle: f32 = 0.;
     let mut camera_flip_counter: f32 = 1.;
     let mut camera_flipped = false;
-    /*c
-    // TEMPORARY
-    world.spawn((Explosion::new(Vec2::new(
-        0.,
-        water_level + player_spawn_offset,
-    )),));
-    */
+
+    let mut post_victory_timer: u32 = 60 * 20;
 
     let mut home_timer = 0;
     let mut home_frame = 0;
@@ -486,10 +481,28 @@ async fn main() {
         };
 
         let below_victory_depth = player_center.y > victory_depth - 4.;
+
+        // If we hang around for a while on the victory screen, spawn enemy fishes.
+        if below_victory_depth {
+            post_victory_timer = post_victory_timer.saturating_sub(1);
+
+            if post_victory_timer == 0 {
+                // Spawn enemy fishes
+                if rand::gen_range(0, 20) < 1 {
+                    let size = rand::gen_range(5., 30.);
+                    let level_item = LevelItem {
+                        position: Vec2::new(900., victory_depth - rand::gen_range(5., 400.)),
+                        half_size: Vec2::new(size, size),
+                        thing_type: ThingType::Enemy,
+                    };
+                    level_item.spawn(&mut physics, &mut world, 0);
+                }
+            }
+        }
         let above_water = player_center.y < water_level + 4.;
 
         // Toggle the level editor
-        if is_key_pressed(KeyCode::E) {
+        if is_key_pressed(KeyCode::GraveAccent) {
             in_level_editor = !in_level_editor;
             if in_level_editor {
                 info!("EDITOR ENABLED");
@@ -634,7 +647,10 @@ async fn main() {
                     }
 
                     if is_key_down(KeyCode::Down) || is_key_down(KeyCode::S) {
+                        player_physics.holding_down = true;
                         player_physics.apply_force(Vec2::new(0., player_acceleration * flip));
+                    } else {
+                        player_physics.holding_down = false;
                     }
 
                     // Check the player against walls
@@ -1161,7 +1177,7 @@ async fn main() {
                                 thing.color,
                             );
                         }
-                        _ => unimplemented!(),
+                        _ => {}
                     },
                 }
             }
