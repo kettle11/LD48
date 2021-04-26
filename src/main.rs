@@ -19,6 +19,7 @@ enum ThingType {
     Missile,
     Enemy,
     Checkpoint,
+    TorpedoUpgrade,
 }
 
 enum Drawable {
@@ -26,6 +27,7 @@ enum Drawable {
     Player,
     Enemy,
     Missile,
+    TorpedoUpgrade,
 }
 
 #[derive(Clone, Debug)]
@@ -49,6 +51,11 @@ struct Checkpoint {
     index_in_level: usize,
 }
 
+struct TorpedoUpgrade {
+    position: Vec2,
+    index_in_level: usize,
+}
+
 impl LevelItem {
     pub fn spawn(&self, physics: &mut Physics, world: &mut World, index_in_level: usize) {
         match self.thing_type {
@@ -59,6 +66,16 @@ impl LevelItem {
                         index_in_level,
                     },
                     Drawable::Rock,
+                ));
+            }
+            ThingType::TorpedoUpgrade => {
+                info!("SPAWNING TORPEDO UPGRADE");
+                world.spawn((
+                    TorpedoUpgrade {
+                        position: self.position,
+                        index_in_level,
+                    },
+                    Drawable::TorpedoUpgrade,
                 ));
             }
             ThingType::Rock => {
@@ -96,7 +113,7 @@ impl LevelItem {
                 // Scale enemy health to their size.
                 let health = (((self.half_size.x * self.half_size.x) / 800.) as u32).max(1);
 
-                info!("ENEMY HEALTH: {:?}", health);
+                // info!("ENEMY HEALTH: {:?}", health);
 
                 world.spawn((
                     Thing {
@@ -138,6 +155,9 @@ impl QuickFormat for LevelItem {
             }
             ThingType::Checkpoint => {
                 write!(s, ",thing_type:ThingType::Checkpoint").unwrap();
+            }
+            ThingType::TorpedoUpgrade => {
+                write!(s, ",thing_type:ThingType::TorpedoUpgrade").unwrap();
             }
             _ => unreachable!(),
         }
@@ -187,6 +207,7 @@ impl QuickFormat for Color {
 
 struct Player {
     direction_x: f32,
+    upgrades_collected: u32,
 }
 
 const HIT_PLAYER_COOLDOWN: u32 = 30;
@@ -289,6 +310,9 @@ impl Explosion {
         }
     }
 }
+
+static mut UPGRADES_COLLECTED: u32 = 1;
+const TORPEDO_UPGRADE_RADIUS: f32 = 35.;
 #[macroquad::main("Sub")]
 async fn main() {
     let explosion_sounds = [
@@ -303,13 +327,20 @@ async fn main() {
         load_sound("assets/enemy_notice.wav").await.unwrap(),
     ];
 
+    let end_music = load_sound("assets/ld48_end.mp3").await.unwrap();
+    let hello_sound = load_sound("assets/hello.wav").await.unwrap();
+    let upgrade_sound = load_sound("assets/upgrade.wav").await.unwrap();
     let hit_sound = load_sound("assets/hurt.wav").await.unwrap();
     let enemy_death_sound = load_sound("assets/enemy_death.wav").await.unwrap();
     let shoot_sound = load_sound("assets/shoot.wav").await.unwrap();
     let dead_tooth_fish_texture = load_texture("assets/DeadToothFish.png").await.unwrap();
     let tooth_fish_texture = load_texture("assets/ToothFish.png").await.unwrap();
 
-    let home_texture = load_texture("assets/home.png").await.unwrap();
+    let home_texture0 = load_texture("assets/home.png").await.unwrap();
+    let home_texture1 = load_texture("assets/home2.png").await.unwrap();
+
+    let mut home_texture = home_texture0;
+    let torpedo_upgrade = load_texture("assets/torpedo_upgrade.png").await.unwrap();
 
     // let font = load_ttf_font("assets/OrelegaOne-Regular.ttf").await;
 
@@ -330,7 +361,7 @@ async fn main() {
 
     let player_half_width = 15.;
     let player_half_height = 7.5;
-    let player_spawn_offset = 300.;
+    let player_spawn_offset = 0.;
 
     let mut screen_shake_amount: f32 = 0.;
 
@@ -350,8 +381,7 @@ async fn main() {
 
         *respawn_timer = RESPAWN_TIMER;
 
-        // Spawn player
-        let physics_handle = physics.push(PhysicsObject::new(
+        let mut physics_object = PhysicsObject::new(
             1.0,
             player_position,
             Collider::Rectangle {
@@ -360,10 +390,19 @@ async fn main() {
             },
             1.0,
             0.98,
-        ));
+        );
+        // Obviously the player is not a missile, but this flag makes
+        // the player not explode missiles when they're bumped.
+        physics_object.is_missile = true;
+
+        // Spawn player
+        let physics_handle = physics.push(physics_object);
 
         world.spawn((
-            Player { direction_x: 1.0 },
+            Player {
+                direction_x: 1.0,
+                upgrades_collected: 0,
+            },
             Thing {
                 color: RED,
                 destructable: false,
@@ -371,11 +410,11 @@ async fn main() {
                 index_in_level: None,
             },
             // Player health
-            Health(10),
+            Health(5),
             Drawable::Player,
         ))
     };
-    let victory_depth = 13000.0;
+    let victory_depth = 34000.0;
 
     let mut physics = Physics::new(water_level, victory_depth);
     physics.gravity = 0.2;
@@ -415,7 +454,22 @@ async fn main() {
     )),));
     */
 
+    let mut home_timer = 0;
+    let mut home_frame = 0;
     loop {
+        home_timer += 1;
+        if home_timer > 30 {
+            if home_frame == 0 {
+                home_texture = home_texture1;
+                home_timer = 0;
+                home_frame = 1;
+            } else {
+                home_texture = home_texture0;
+                home_timer = 0;
+                home_frame = 0;
+            }
+        }
+
         screen_shake_amount *= 0.94;
         //  let left_wall = -main_area_width / 2.;
         //  let right_wall = main_area_width / 2.;
@@ -613,8 +667,9 @@ async fn main() {
                         camera_focal_y = player_center.y + camera_buffer;
                     }
 
+                    let has_missiles = unsafe { UPGRADES_COLLECTED > 0 };
                     // Fire missile
-                    if is_key_pressed(KeyCode::Space) {
+                    if has_missiles && is_key_pressed(KeyCode::Space) {
                         play_sound_once(shoot_sound);
                         let position = player_physics.position
                             + Vec2::new(
@@ -636,6 +691,8 @@ async fn main() {
                             1.0,
                             1.0,
                         );
+                        // set to make missiles not explode against each-other
+                        physics_object.is_missile = true;
                         physics_object.apply_force(acceleration_direction * 10.);
                         let physics_handle = physics.push(physics_object);
                         missile_to_spawn = Some((
@@ -658,6 +715,7 @@ async fn main() {
             // Separated out to avoid borrow checker complaints.
 
             if let Some((missile_to_spawn, direction)) = missile_to_spawn.take() {
+                info!("MISSILE SPAWNING");
                 world.spawn((
                     missile_to_spawn,
                     Missile {},
@@ -679,15 +737,6 @@ async fn main() {
                 camera_angle = camera_target_angle;
             }
 
-            if is_key_pressed(KeyCode::F) {
-                if camera_target_angle == 180. {
-                    camera_target_angle = 0.;
-                } else {
-                    camera_target_angle = 180.;
-                };
-                camera_flip_counter = 0.0;
-            }
-
             let t = camera_flip_counter * camera_flip_counter;
 
             set_camera(&Camera2D {
@@ -698,6 +747,15 @@ async fn main() {
             });
 
             if below_victory_depth && !camera_flipped {
+                play_sound_once(hello_sound);
+                // Play victory music!
+                play_sound(
+                    end_music,
+                    PlaySoundParams {
+                        looped: true,
+                        volume: 1.0,
+                    },
+                );
                 camera_target_angle = 180.;
                 camera_flip_counter = 0.0;
                 camera_flipped = true;
@@ -707,6 +765,23 @@ async fn main() {
                 camera_target_angle = 0.0;
                 camera_flip_counter = 0.0;
                 camera_flipped = false;
+            }
+
+            let mut collected = false;
+            for (entity, torpedo_upgrade) in &mut world.query::<&TorpedoUpgrade>() {
+                if (torpedo_upgrade.position - player_center).length() < TORPEDO_UPGRADE_RADIUS {
+                    info!("COLLECT TORPEDO UPGRADE");
+                    entities_to_despawn.push(entity);
+                    play_sound_once(upgrade_sound);
+                    collected = true;
+                }
+            }
+            if collected {
+                for (_, player) in &mut world.query::<&mut Player>() {
+                    unsafe {
+                        UPGRADES_COLLECTED += 1;
+                    }
+                }
             }
 
             physics.run();
@@ -765,6 +840,11 @@ async fn main() {
                 info!("CHECKPOINT MODE");
                 editor_mode = 4;
             }
+
+            if is_key_pressed(KeyCode::Key5) {
+                info!("TORPEDO UPGRADE MODE");
+                editor_mode = 5;
+            }
             let mouse_position_in_world = camera.screen_to_world(mouse_position().into());
 
             match editor_mode {
@@ -777,6 +857,14 @@ async fn main() {
                                 to_despawn = Some((entity, Some(thing.index_in_level)));
                             }
                         }
+
+                        for (entity, (thing,)) in world.query::<(&TorpedoUpgrade,)>().iter() {
+                            let distance = thing.position - mouse_position_in_world;
+                            if distance.length() < 20. {
+                                to_despawn = Some((entity, Some(thing.index_in_level)));
+                            }
+                        }
+
                         if to_despawn.is_none() {
                             for (entity, (thing,)) in world.query::<(&Thing,)>().iter() {
                                 let p = physics.get(thing.physics_handle).unwrap();
@@ -859,6 +947,11 @@ async fn main() {
                                     position: rect.point() + rect.size() / 2.,
                                     half_size: rect.size() / 2.,
                                     thing_type: ThingType::Checkpoint,
+                                },
+                                5 => LevelItem {
+                                    position: rect.point() + rect.size() / 2.,
+                                    half_size: rect.size() / 2.,
+                                    thing_type: ThingType::TorpedoUpgrade,
                                 },
                                 _ => unimplemented!(),
                             };
@@ -1040,6 +1133,22 @@ async fn main() {
                         }
                         _ => unimplemented!(),
                     },
+                    Drawable::TorpedoUpgrade => {
+                        info!("DRAWING TORPEDO UPGRADE");
+                        draw_texture_ex(
+                            torpedo_upgrade,
+                            physics_object.position.x - TORPEDO_UPGRADE_RADIUS,
+                            physics_object.position.y - TORPEDO_UPGRADE_RADIUS,
+                            WHITE,
+                            DrawTextureParams {
+                                dest_size: Some(Vec2::new(
+                                    TORPEDO_UPGRADE_RADIUS * 2.,
+                                    TORPEDO_UPGRADE_RADIUS * 2.,
+                                )),
+                                ..Default::default()
+                            },
+                        );
+                    }
                     _ => match physics_object.collider {
                         Collider::Rectangle {
                             half_width,
@@ -1126,10 +1235,10 @@ async fn main() {
             draw_texture_ex(
                 home_texture,
                 0.,
-                victory_depth + 300.,
+                victory_depth + 400.,
                 WHITE,
                 DrawTextureParams {
-                    dest_size: Some(Vec2::new(-300., -300.)),
+                    dest_size: Some(Vec2::new(-400., -400.)),
                     ..Default::default()
                 },
             );
@@ -1153,6 +1262,23 @@ async fn main() {
             },
         );
         */
+
+        // Draw torpedo upgrades
+        for (_entity, upgrade) in &mut world.query::<&mut TorpedoUpgrade>() {
+            draw_texture_ex(
+                torpedo_upgrade,
+                upgrade.position.x - TORPEDO_UPGRADE_RADIUS,
+                upgrade.position.y - TORPEDO_UPGRADE_RADIUS,
+                WHITE,
+                DrawTextureParams {
+                    dest_size: Some(Vec2::new(
+                        TORPEDO_UPGRADE_RADIUS * 2.,
+                        TORPEDO_UPGRADE_RADIUS * 2.,
+                    )),
+                    ..Default::default()
+                },
+            );
+        }
 
         if in_level_editor {
             for (_entity, checkpoint) in &mut world.query::<&mut Checkpoint>() {

@@ -14,6 +14,7 @@ pub struct PhysicsObject {
     pub friction: f32,
     pub last_collision_impact: Vec2,
     indirection_index: usize,
+    pub is_missile: bool,
 }
 impl PhysicsObject {
     pub const fn new(
@@ -32,6 +33,7 @@ impl PhysicsObject {
             friction,
             last_collision_impact: Vec2::ZERO,
             indirection_index: 0,
+            is_missile: false,
         }
     }
 
@@ -104,6 +106,7 @@ impl Physics {
         };
         physics_object.indirection_index = indirection_index;
         self.objects.push(physics_object);
+        info!("NEW PHYSICS HANDLE: {:?}", self.objects.len());
 
         //  info!("INDIRECTION INDEX: {:?}", indirection_index);
         PhysicsHandle(indirection_index)
@@ -145,7 +148,7 @@ impl Physics {
             if object.position.y > self.victory_water_level {
                 if (object.position.y - self.victory_water_level).abs() < 1.0 {
                     // Apply more buoyancy
-                    object.position.y += 0.2 * object.gravity_multiplier;
+                    object.position.y += 0.15 * object.gravity_multiplier;
                 } else {
                     object.position.y -= 0.07 * object.gravity_multiplier;
                 }
@@ -335,15 +338,17 @@ impl Physics {
                             Collider::Rectangle {
                                 half_width,
                                 half_height,
-                            } => rectangle_rectangle(
-                                &mut object0.position,
-                                &mut object1.position,
-                                h0,
-                                Vec2::new(half_width, half_height),
-                                mass_ratio,
-                                &mut object0.last_collision_impact,
-                                &mut object1.last_collision_impact,
-                            ),
+                            } => {
+                                rectangle_rectangle(
+                                    &mut object0.position,
+                                    &mut object1.position,
+                                    h0,
+                                    Vec2::new(half_width, half_height),
+                                    mass_ratio,
+                                    &mut object0.last_collision_impact,
+                                    &mut object1.last_collision_impact,
+                                );
+                            }
                         }
                     }
                 }
