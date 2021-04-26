@@ -69,7 +69,6 @@ impl LevelItem {
                 ));
             }
             ThingType::TorpedoUpgrade => {
-                info!("SPAWNING TORPEDO UPGRADE");
                 world.spawn((
                     TorpedoUpgrade {
                         position: self.position,
@@ -429,7 +428,7 @@ async fn main() {
         &mut respawn_timer,
         player_start,
     );
-    let missile_size = Vec2::new(10., 5.);
+    let missile_size = Vec2::new(8., 4.);
     let mut entities_to_despawn = Vec::new();
 
     let mut in_level_editor = false;
@@ -458,7 +457,7 @@ async fn main() {
     let mut home_frame = 0;
     loop {
         home_timer += 1;
-        if home_timer > 30 {
+        if home_timer > 33 {
             if home_frame == 0 {
                 home_texture = home_texture1;
                 home_timer = 0;

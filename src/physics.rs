@@ -106,7 +106,6 @@ impl Physics {
         };
         physics_object.indirection_index = indirection_index;
         self.objects.push(physics_object);
-        info!("NEW PHYSICS HANDLE: {:?}", self.objects.len());
 
         //  info!("INDIRECTION INDEX: {:?}", indirection_index);
         PhysicsHandle(indirection_index)
@@ -148,7 +147,7 @@ impl Physics {
             if object.position.y > self.victory_water_level {
                 if (object.position.y - self.victory_water_level).abs() < 1.0 {
                     // Apply more buoyancy
-                    object.position.y += 0.15 * object.gravity_multiplier;
+                    object.position.y += 0.12 * object.gravity_multiplier;
                 } else {
                     object.position.y -= 0.07 * object.gravity_multiplier;
                 }
